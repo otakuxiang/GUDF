@@ -137,9 +137,38 @@ __device__ float computeOpacityGUDF(const glm::vec3 &p_world, const float *norma
 	dT_dV2G[14] = dTdo[2];
 	dT_dV2G[15] = 0;
 
-	dT_dscale[0] = -ray_gauss[0] / 3 / scale[0] / scale[0];
-	dT_dscale[1] = -ray_gauss[1] / 3 / scale[1] / scale[1];
-	dT_dscale[2] = -ray_gauss[2] / 3 / scale[2] / scale[2];
+	dT_dscale[0] = -ray_gauss[0] / 3 / (scale[0]+1e-5) / (scale[0] + 1e-5);
+	dT_dscale[1] = -ray_gauss[1] / 3 / (scale[1]+1e-5) / (scale[1]+1e-5);
+	dT_dscale[2] = -ray_gauss[2] / 3 / (scale[2]+1e-5) / (scale[2]+1e-5);
+	// check if dT_dscale is too large
+	if( isnan(dT_dscale[0]) || isnan(dT_dscale[1]) || isnan(dT_dscale[2]) || isinf(dT_dscale[0]) || isinf(dT_dscale[1]) || isinf(dT_dscale[2]) ){
+	
+		printf("dT_dscale is nan or inf!\n");
+		printf("current parameters");
+		printf("p_world: %f %f %f", p_world.x, p_world.y, p_world.z); 
+		printf("normal: %f %f %f", normal[0], normal[1], normal[2]); 
+		printf("kappa: %f", kappa); 
+		printf("depth: %f", depth); 
+		printf("W: %d", W); 
+		printf("H: %d", H); 
+		printf("focal_x: %f", focal_x); 
+		printf("focal_y: %f", focal_y); 
+		printf("view2gaussian:");
+		for(int i = 0; i < 16; i++){
+			printf(" %f", view2gaussian[i]);
+		}
+		printf("\n"); 
+		printf("pixf: %f %f\n", pixf.x, pixf.y); 
+		printf("scale: %f %f %f\n", scale.x, scale.y, scale.z);
+		printf("dT_dkappa: %f\n", dT_dkappa[0]);
+		printf("dT_dV2G:");
+		for(int i = 0; i < 16; i++){
+			printf(" %f", dT_dV2G[i]);
+		}
+		printf("\n"); 
+		printf("dT_dnormal3D: %f %f %f\n", dT_dnormal3D[0], dT_dnormal3D[1], dT_dnormal3D[2]);
+		// printf("dT_dscale: %f %f %f\n", dT_dscale[0], dT_dscale[1], dT_dscale[2]);
+	}
 
 	return A * C / B;
 }
@@ -715,13 +744,21 @@ renderCUDA(
 				atomicAdd((&dL_dnormal3D[global_id * 3]), dL_dT * dT_dnormal3D.x);
 				atomicAdd((&dL_dnormal3D[global_id * 3 + 1]), dL_dT * dT_dnormal3D.y);
 				atomicAdd((&dL_dnormal3D[global_id * 3 + 2]), dL_dT * dT_dnormal3D.z);
-				for (int ii = 0; ii < 16; ii++)
+				for (int ii = 0; ii < 16; ii++) 
 				{
 					atomicAdd(&(dL_dview2gaussians[global_id * 16 + ii]), dL_dT * dT_dV2G[ii]);
 				}
+				
+
 				atomicAdd(&dL_dscale[global_id][0], dL_dT * dT_dscale[0]);
 				atomicAdd(&dL_dscale[global_id][1], dL_dT * dT_dscale[1]);
 				atomicAdd(&dL_dscale[global_id][2], dL_dT * dT_dscale[2]);
+				// if( global_id == 80 ){	
+				// 	printf("dT_dscale: %f %f %f\n", dT_dscale[0], dT_dscale[1], dT_dscale[2]);
+				// 	printf("dL_dT: %f\n", dL_dT);
+				// 	printf("dL_dscale: %f %f %f\n", dL_dscale[global_id][0], dL_dscale[global_id][1], dL_dscale[global_id][2]);
+				// 	printf("nor_o.w dL_dalpha: %f %f\n", nor_o.w, dL_dalpha);
+				// }
 			}
 			
 
@@ -775,7 +812,7 @@ renderCUDA(
 			}
 
 			// Update gradients w.r.t. opacity of the Gaussian
-			atomicAdd(&(dL_dopacity[global_id]), alpha / nor_o.w * dL_dalpha);
+			atomicAdd(&(dL_dopacity[global_id]), alpha / (nor_o.w + 1e-5) * dL_dalpha);
 		}
 	}
 }
@@ -803,12 +840,12 @@ inline __device__ void computeTransMat(
 	); // viewmat 
 
 	const glm::vec3 cam_pos = glm::vec3(viewmat[12], viewmat[13], viewmat[14]); // camera center
-	const glm::mat4 P = glm::mat4(
-		intrins.x, 0.0, 0.0, 0.0,
-		0.0, intrins.y, 0.0, 0.0,
-		intrins.z, intrins.w, 1.0, 1.0,
-		0.0, 0.0, 0.0, 0.0
-	);
+	// const glm::mat4 P = glm::mat4(
+	// 	intrins.x, 0.0, 0.0, 0.0,
+	// 	0.0, intrins.y, 0.0, 0.0,
+	// 	intrins.z, intrins.w, 1.0, 1.0,
+	// 	0.0, 0.0, 0.0, 0.0
+	// );
 
 	glm::mat3 S = scale_to_mat({scale.x, scale.y, 1.0f}, 1.0f);
 	glm::mat3 R = quat_to_rotmat(quat);
@@ -817,25 +854,25 @@ inline __device__ void computeTransMat(
 	glm::mat3 M = glm::mat3(W * RS[0], W * RS[1], p_view);
 
 
-	glm::mat4x3 dL_dT = glm::mat4x3(
-		dL_dtransMat[0], dL_dtransMat[1], dL_dtransMat[2],
-		dL_dtransMat[3], dL_dtransMat[4], dL_dtransMat[5],
-		dL_dtransMat[6], dL_dtransMat[7], dL_dtransMat[8],
-		0.0, 0.0, 0.0
-	);
+	// glm::mat4x3 dL_dT = glm::mat4x3(
+	// 	dL_dtransMat[0], dL_dtransMat[1], dL_dtransMat[2],
+	// 	dL_dtransMat[3], dL_dtransMat[4], dL_dtransMat[5],
+	// 	dL_dtransMat[6], dL_dtransMat[7], dL_dtransMat[8],
+	// 	0.0, 0.0, 0.0
+	// );
 
-	glm::mat3x4 dL_dM_aug = glm::transpose(P) * glm::transpose(dL_dT);
-	glm::mat3 dL_dM = glm::mat3(
-		glm::vec3(dL_dM_aug[0]),
-		glm::vec3(dL_dM_aug[1]),
-		glm::vec3(dL_dM_aug[2])
-	);
+	// glm::mat3x4 dL_dM_aug = glm::transpose(P) * glm::transpose(dL_dT);
+	// glm::mat3 dL_dM = glm::mat3(
+	// 	glm::vec3(dL_dM_aug[0]),
+	// 	glm::vec3(dL_dM_aug[1]),
+	// 	glm::vec3(dL_dM_aug[2])
+	// );
 
 	glm::mat3 W_t = glm::transpose(W);
-	glm::mat3 dL_dRS = W_t * dL_dM;
-	glm::vec3 dL_dRS0 = dL_dRS[0];
-	glm::vec3 dL_dRS1 = dL_dRS[1];
-	glm::vec3 dL_dpw = dL_dRS[2];
+	// glm::mat3 dL_dRS = W_t * dL_dM;
+	// glm::vec3 dL_dRS0 = dL_dRS[0];
+	// glm::vec3 dL_dRS1 = dL_dRS[1];
+	// glm::vec3 dL_dpw = dL_dRS[2];
 	glm::vec3 dL_dtn = W_t * glm::vec3(dL_dnormal3D[0], dL_dnormal3D[1], dL_dnormal3D[2]);
 
 #if DUAL_VISIABLE
@@ -845,19 +882,34 @@ inline __device__ void computeTransMat(
 	dL_dtn *= multiplier;
 #endif
 
+	// glm::mat3 dL_dR = glm::mat3(
+	// 	dL_dRS0 * glm::vec3(scale.x),
+	// 	dL_dRS1 * glm::vec3(scale.y),
+	// 	dL_dtn
+	// );
 	glm::mat3 dL_dR = glm::mat3(
-		dL_dRS0 * glm::vec3(scale.x),
-		dL_dRS1 * glm::vec3(scale.y),
+		glm::vec3(0.,0.,0.),
+		glm::vec3(0.,0.,0.),
 		dL_dtn
 	);
-
+	// double n = dL_dRS0[0] * dL_dRS0[0] + dL_dRS0[1] * dL_dRS0[1] + dL_dRS0[2] * dL_dRS0[2];
+	// if(n > 1e-6){
+	// 	// print dL_dtransMat
+	// 	for(int i = 0; i < 9; i++){
+	// 		printf("%f ", dL_dtransMat[i]);
+	// 	}
+	// 	printf("\n");
+	// }
 	dL_drot = quat_to_rotmat_vjp(quat, dL_dR);
-	dL_dscale = glm::vec2(
-		(float)glm::dot(dL_dRS0, R[0]),
-		(float)glm::dot(dL_dRS1, R[1])
-	);
+	// dL_dscale = glm::vec2(
+	// 	(float)glm::dot(dL_dRS0, R[0]),
+	// 	(float)glm::dot(dL_dRS1, R[1])
+	// );
+	// if(abs(dL_dscale[0]) > 1e-5 || abs(dL_dscale[1]) > 1e-5){
+	// 	printf("scale: %f, %f\n", dL_dscale[0], dL_dscale[1]); 
+	// }
 
-	dL_dmean3D = dL_dpw;
+	// dL_dmean3D = dL_dpw;
 }
 
 
@@ -923,9 +975,9 @@ __global__ void preprocessCUDA(
 		dL_drot
 	);
 	// update 
-	dL_dmean3Ds[idx] += dL_dmean3D;
-	dL_dscales[idx][0] += dL_dscale[0];
-	dL_dscales[idx][1] += dL_dscale[1];
+	// dL_dmean3Ds[idx] += dL_dmean3D;
+	// dL_dscales[idx][0] += dL_dscale[0];
+	// dL_dscales[idx][1] += dL_dscale[1];
 
 	dL_drots[idx] = dL_drot;
 	computeView2Gaussian_backward(idx, means3D[idx], rotations[idx], viewmatrix, view2gaussian + 16 * idx, dL_dview2gaussian + 16 * idx, dL_dmean3Ds, dL_drots);
@@ -987,6 +1039,26 @@ __global__ void computeAABB(int P,
 }
 
 
+__global__ void computeMean2D_backward(int P, const float3* means3D, 
+	const float* viewmatrix,
+	const float focal_x, const float focal_y,
+	const glm::vec3* dL_dmean3Ds, 
+	float3* dL_dmean2Ds) {
+
+	auto idx = cg::this_grid().thread_rank();
+	glm::mat3 R = glm::mat3(viewmatrix[0],viewmatrix[1],viewmatrix[2],
+		viewmatrix[4],viewmatrix[5],viewmatrix[6],
+		viewmatrix[8],viewmatrix[9],viewmatrix[10]);
+	glm::vec3 t = glm::vec3(viewmatrix[12], viewmatrix[13], viewmatrix[14]);
+	glm::vec3 p_world = glm::vec3(means3D[idx].x, means3D[idx].y, means3D[idx].z);
+	glm::vec3 p_view = R * p_world + t;
+	float depth = p_view[2];
+	glm::vec3 dL_dmean3Ds_V =  glm::transpose(R) * dL_dmean3Ds[idx];
+	dL_dmean2Ds[idx].x = dL_dmean3Ds_V.x * depth / focal_x; 
+	dL_dmean2Ds[idx].y = dL_dmean3Ds_V.y * depth / focal_x; 
+	// TODO: use metric proposed in GOF
+	dL_dmean2Ds[idx].z = 0;
+}
 void BACKWARD::preprocess(
 	int P, int D, int M,
 	const float3* means3D,
@@ -1023,13 +1095,13 @@ void BACKWARD::preprocess(
 	// we do not use the center actually
 	float W = focal_x * tan_fovx;
 	float H = focal_y * tan_fovy;
-	computeAABB << <(P + 255) / 256, 256 >> >(
-		P,
-		radii,
-		W, H,
-		transMats,
-		dL_dmean2Ds,
-		dL_dtransMats);
+	// computeAABB << <(P + 255) / 256, 256 >> >(
+	// 	P,
+	// 	radii,
+	// 	W, H,
+	// 	transMats,
+	// 	dL_dmean2Ds,
+	// 	dL_dtransMats);
 	
 	// propagate gradients from transMat to mean3d, scale, rot, sh, color
 	preprocessCUDA<NUM_CHANNELS><< <(P + 255) / 256, 256 >> > (
@@ -1059,6 +1131,8 @@ void BACKWARD::preprocess(
 		dL_dscales,
 		dL_drots
 	);
+	computeMean2D_backward<<<(P + 255) / 256, 256>>>(P, means3D, viewmatrix, 
+		focal_x, focal_y, dL_dmean3Ds, dL_dmean2Ds);
 }
 
 void BACKWARD::render(

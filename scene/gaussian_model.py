@@ -37,7 +37,9 @@ class GaussianModel:
         self.opacity_activation = torch.sigmoid
         self.inverse_opacity_activation = inverse_sigmoid
         self.rotation_activation = torch.nn.functional.normalize
-
+        def kappa_activation(kappa):
+            return 10. * torch.sigmoid(kappa)
+        self.kappa_activation = kappa_activation
 
     def __init__(self, sh_degree : int):
         self.active_sh_degree = 0
@@ -91,18 +93,28 @@ class GaussianModel:
         self.denom = denom
         self.optimizer.load_state_dict(opt_dict)
 
+    def get_kappas_grad(self):
+        return self._kappas.grad
     @property
     def get_kappas(self):
-        return self._kappas
+        return self.kappa_activation(self._kappas)
     
     @property
     def get_scaling(self):
         return self.scaling_activation(self._scaling) #.clamp(max=1)
     
+    def get_scale_grad(self):
+        return self._scaling.grad
+    
+    def get_rotation_grad(self):
+        return self._kappas.grad
     @property
     def get_rotation(self):
         return self.rotation_activation(self._rotation)
     
+    
+    def get_xyz_grad(self):
+        return self._xyz.grad
     @property
     def get_xyz(self):
         return self._xyz
@@ -113,6 +125,8 @@ class GaussianModel:
         features_rest = self._features_rest
         return torch.cat((features_dc, features_rest), dim=1)
     
+    def get_opacity_grad(self):
+        return self._opacity.grad
     @property
     def get_opacity(self):
         return self.opacity_activation(self._opacity)
@@ -139,7 +153,7 @@ class GaussianModel:
         rots = torch.rand((fused_point_cloud.shape[0], 4), device="cuda")
 
         opacities = self.inverse_opacity_activation(0.4 * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda"))
-        kappas = torch.ones_like(opacities) * 1
+        kappas = torch.ones_like(opacities) * (-2)
         self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
         self._features_dc = nn.Parameter(features[:,:,0:1].transpose(1, 2).contiguous().requires_grad_(True))
         self._features_rest = nn.Parameter(features[:,:,1:].transpose(1, 2).contiguous().requires_grad_(True))
@@ -367,11 +381,12 @@ class GaussianModel:
         selected_pts_mask = torch.logical_and(selected_pts_mask,
                                               torch.max(self.get_scaling, dim=1).values > self.percent_dense*scene_extent)
         # breakpoint()
-        stds = self.get_scaling[selected_pts_mask].repeat(N,1)
+        stds = self.get_scaling[selected_pts_mask][:,:2].repeat(N,1)
         stds = torch.cat([stds, 0 * torch.ones_like(stds[:,:1])], dim=-1)
         means = torch.zeros_like(stds)
         samples = torch.normal(mean=means, std=stds)
         rots = build_rotation(self._rotation[selected_pts_mask]).repeat(N,1,1)
+        # breakpoint()
         new_xyz = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1) + self.get_xyz[selected_pts_mask].repeat(N, 1)
         new_scaling = self.scaling_inverse_activation(self.get_scaling[selected_pts_mask].repeat(N,1) / (0.8*N))
         new_rotation = self._rotation[selected_pts_mask].repeat(N,1)
@@ -417,5 +432,7 @@ class GaussianModel:
         torch.cuda.empty_cache()
 
     def add_densification_stats(self, viewspace_point_tensor, update_filter):
+        # breakpoint()
+        # print(torch.norm(viewspace_point_tensor.grad[update_filter], dim=-1, keepdim=True).mean())
         self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter], dim=-1, keepdim=True)
         self.denom[update_filter] += 1
