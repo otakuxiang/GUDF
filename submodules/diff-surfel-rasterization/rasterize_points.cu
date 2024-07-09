@@ -207,7 +207,6 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
   torch::Tensor dL_drotations = torch::zeros({P, 4}, means3D.options());
   torch::Tensor dL_dkappas = torch::zeros({P, 1}, means3D.options());
   torch::Tensor dL_dview2gaussians = torch::zeros({P, 16}, means3D.options());
-
   
   if(P != 0)
   {  
@@ -247,6 +246,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
 	  dL_dkappas.contiguous().data<float>(),
 	  debug);
   }
+
 
   return std::make_tuple(dL_dmeans2D, dL_dcolors, dL_dopacity, dL_dmeans3D, dL_dtransMat, dL_dsh, dL_dscales, dL_drotations, dL_dkappas);
 }

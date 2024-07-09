@@ -8,7 +8,7 @@
 #
 # For inquiries contact  george.drettakis@inria.fr
 #
-
+import traceback
 import torch
 import math
 from diff_surfel_rasterization import GaussianRasterizationSettings, GaussianRasterizer
@@ -66,6 +66,8 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         cov3D_precomp = pc.get_covariance(scaling_modifier)
     else:
         scales = pc.get_scaling
+        # if scales.isnan().any():
+        #     breakpoint()
         rotations = pc.get_rotation
     
     # If precomputed colors are provided, use them. Otherwise, if it is desired to precompute colors
@@ -101,7 +103,6 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         kappas = pc.get_kappas,
         cov3D_precomp = cov3D_precomp
     )
-    
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.
     rets =  {"render": rendered_image,

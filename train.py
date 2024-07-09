@@ -74,7 +74,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if not viewpoint_stack:
             viewpoint_stack = scene.getTrainCameras().copy()
         viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
-        udfw = weight_schedule(iteration, 3100, 28000, 1.0, 1.0)
+        udfw = weight_schedule(iteration, 15001, 20000, 0., 1.0)
         # print(udfw)
         render_pkg = render(viewpoint_cam, gaussians, pipe, background,lamda=udfw)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
@@ -85,36 +85,43 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # regularization
         lambda_normal = opt.lambda_normal if iteration > 7000 else 0.0
         lambda_dist = opt.lambda_dist if iteration > 3000 else 0.0
-
+        lambda_scale = 2 if iteration > 15500 else 0.0
         rend_dist = render_pkg["rend_dist"]
         rend_normal  = render_pkg['rend_normal']
         surf_normal = render_pkg['surf_normal']
         normal_error = (1 - (rend_normal * surf_normal).sum(dim=0))[None]
         normal_loss = lambda_normal * (normal_error).mean()
         dist_loss = lambda_dist * (rend_dist).mean()
-
+        scale_loss = lambda_scale * (gaussians.get_scaling ** 2).mean()
+        # if iteration % 10 == 0:
+        #     print(dist_loss.item())
         # loss
-        total_loss = loss + dist_loss + normal_loss
+        total_loss = loss + dist_loss + normal_loss + scale_loss
         
         total_loss.backward()
         # breakpoint()
         # exit()
-
+        # if iteration > 15000 and udfw > 0.:
+        #     exit()
         iter_end.record()
 
         with torch.no_grad():
             # Progress bar
-            ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
-            ema_dist_for_log = 0.4 * dist_loss.item() + 0.6 * ema_dist_for_log
-            ema_normal_for_log = 0.4 * normal_loss.item() + 0.6 * ema_normal_for_log
-
+            ema_loss_for_log = loss.item() 
+            ema_dist_for_log =  dist_loss.item() 
+            ema_normal_for_log = normal_loss.item()
+            import math
+            if ema_dist_for_log == math.nan:
+                breakpoint()
+                
 
             if iteration % 10 == 0:
                 loss_dict = {
                     "Loss": f"{ema_loss_for_log:.{5}f}",
                     "distort": f"{ema_dist_for_log:.{5}f}",
                     "normal": f"{ema_normal_for_log:.{5}f}",
-                    "Points": f"{len(gaussians.get_xyz)}"
+                    "Points": f"{len(gaussians.get_xyz)}",
+                    "scales": f"{gaussians.get_scaling.mean().item():.{5}f}",
                 }
                 progress_bar.set_postfix(loss_dict)
 
@@ -135,11 +142,28 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
             # Densification
             if iteration < opt.densify_until_iter:
+                # try:
+                # if gaussians.get_scale_grad().isnan().any():
+                #     print("NaN in scale grad")
+                #     torch.save((gaussians.get_scaling_orig()), "./debug/debug_scaling.pth")
+                #     exit()
+                    
+                #     da = radii.float().mean()
+                #     torch.cuda.synchronize()
+                # except Exception as e:
+                #     import traceback
+                #     print(traceback.format_exc())
+                #     breakpoint()
+
                 gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
+
                 gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
 
                 if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
                     size_threshold = 20 if iteration > opt.opacity_reset_interval else None
+                    # opacity_cull = weight_schedule(iteration, 10001, 12000, opt.opacity_cull, opt.opacity_cull * 0.2)
+                    # opacity_cull = opt.opacity_cull
+                    
                     gaussians.densify_and_prune(opt.densify_grad_threshold, opt.opacity_cull, scene.cameras_extent, size_threshold)
                 
                 if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
@@ -245,10 +269,10 @@ if __name__ == "__main__":
     parser.add_argument('--ip', type=str, default="127.0.0.1")
     parser.add_argument('--port', type=int, default=6009)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
-    parser.add_argument("--test_iterations", nargs="+", type=int, default=[1000,7_000, 30_000])
-    parser.add_argument("--save_iterations", nargs="+", type=int, default=[1000,7_000, 30_000])
+    parser.add_argument("--test_iterations", nargs="+", type=int, default=[7_000, 30_000])
+    parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000, 30_000])
     parser.add_argument("--quiet", action="store_true")
-    parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
+    parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[15002])
     parser.add_argument("--start_checkpoint", type=str, default = None)
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)

@@ -38,7 +38,7 @@ class GaussianModel:
         self.inverse_opacity_activation = inverse_sigmoid
         self.rotation_activation = torch.nn.functional.normalize
         def kappa_activation(kappa):
-            return 10. * torch.sigmoid(kappa)
+            return 5. * torch.sigmoid(kappa)
         self.kappa_activation = kappa_activation
 
     def __init__(self, sh_degree : int):
@@ -99,6 +99,9 @@ class GaussianModel:
     def get_kappas(self):
         return self.kappa_activation(self._kappas)
     
+    def get_scaling_orig(self):
+        return self._scaling
+    
     @property
     def get_scaling(self):
         return self.scaling_activation(self._scaling) #.clamp(max=1)
@@ -153,7 +156,8 @@ class GaussianModel:
         rots = torch.rand((fused_point_cloud.shape[0], 4), device="cuda")
 
         opacities = self.inverse_opacity_activation(0.4 * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda"))
-        kappas = torch.ones_like(opacities) * (-2)
+        import math
+        kappas = inverse_sigmoid(torch.ones_like(opacities))
         self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
         self._features_dc = nn.Parameter(features[:,:,0:1].transpose(1, 2).contiguous().requires_grad_(True))
         self._features_rest = nn.Parameter(features[:,:,1:].transpose(1, 2).contiguous().requires_grad_(True))
@@ -176,7 +180,7 @@ class GaussianModel:
             {'params': [self._opacity], 'lr': training_args.opacity_lr, "name": "opacity"},
             {'params': [self._scaling], 'lr': training_args.scaling_lr, "name": "scaling"},
             {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"},
-            {'params': [self._kappas], 'lr': training_args.scaling_lr, "name": "kappas"}
+            {'params': [self._kappas], 'lr': training_args.opacity_lr, "name": "kappas"}
         
         ]
 
@@ -267,7 +271,7 @@ class GaussianModel:
         rots = np.zeros((xyz.shape[0], len(rot_names)))
         for idx, attr_name in enumerate(rot_names):
             rots[:, idx] = np.asarray(plydata.elements[0][attr_name])
-        kappas = np.asarray(plydata.elements[0]['kappas'])
+        kappas = np.asarray(plydata.elements[0]['kappas'])[..., np.newaxis]
         self._xyz = nn.Parameter(torch.tensor(xyz, dtype=torch.float, device="cuda").requires_grad_(True))
         self._features_dc = nn.Parameter(torch.tensor(features_dc, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
         self._features_rest = nn.Parameter(torch.tensor(features_extra, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))

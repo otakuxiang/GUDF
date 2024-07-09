@@ -445,6 +445,15 @@ void CudaRasterizer::Rasterizer::backward(
 		dL_dcolor,
 		dL_dkappas
 		), debug)
+	// move dL_dscale to cpu and check if is nan
+	// float dL_dscale_cpu[P*3];
+	// cudaMemcpy(dL_dscale_cpu, dL_dscale, 3 * P * sizeof(float),cudaMemcpyDeviceToHost);
+	// for (int i = 0; i < P*3; i++) {
+	// 	if (std::isnan(dL_dscale_cpu[i])) {
+	// 		printf("dL_dscale is nan after render");
+	// 		break;
+	// 	}
+	// }
 
 	// Take care of the rest of preprocessing. Was the precomputed covariance
 	// given to us or a scales/rot pair? If precomputed, pass that. If not,

@@ -376,7 +376,6 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	float truncated_R = 3.f;
 #endif
 	float radius = ceil(truncated_R * max(max(extent.x, extent.y), FilterSize));
-
 	uint2 rect_min, rect_max;
 	getRect(center, radius, rect_min, rect_max, grid);
 	if ((rect_max.x - rect_min.x) * (rect_max.y - rect_min.y) == 0)
