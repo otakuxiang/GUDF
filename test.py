@@ -2,57 +2,55 @@
 
 '''
 datas:
-c_depth gt_depth: 2.252949 2.252949
-pixf: 400.500000 400.500000
+dT_dscale: -11.519535 -11.063791 -1.385012
+pixf: 211.500000 204.500000
 W H: 800 800
 focal_x focal_y: 1111.111084 1111.111084
-viewmat: -0.929776 -0.269164 0.251130 0.000000 
--0.368125 0.679831 -0.634282 0.000000 
--0.000000 -0.682188 -0.731177 0.000000 
-0.000000 -0.000000 4.031129 1.000000 
-quat: 0.513834 0.555851 0.482728 0.440429
+viewmat: 0.929775 0.185817 -0.317789 0.000000 
+0.368127 -0.469316 0.802636 0.000000 
+0.000000 -0.863258 -0.504763 0.000000 
+-0.000000 0.000000 4.031129 1.000000 
+quat: 0.076658 -0.001339 0.624664 0.777121
 q_rot:
-0.145993 0.989265 -0.006458 
-0.084034 -0.005897 0.996445 
-0.985710 -0.146016 -0.083993 
-scale: 0.045963 0.045963 0.025963
-normal: 0.862738 0.307285 -0.401571
-p_world: -0.456891 1.104019 1.234447
-kappa: 0.100000
-UDF_opacity G: 0.002995 0.313913
+-0.988244 0.117472 -0.097852 
+-0.120818 -0.207837 0.970673 
+0.093689 0.971084 0.219587 
+scale: 0.005788 0.002608 0.036238
+normal: -0.444592 0.627896 -0.638815
+p_world: -0.350404 -0.504902 0.902317
+kappa: 5.000000
 '''
 from re import T
 import torch
 import quaternion
 import numpy as np
-pixf = torch.tensor([400.5, 400.5])
+from torchviz import make_dot
+dT_dscale = torch.tensor([-4522.342773, -4771.300781, -170.739288])
+pixf = torch.tensor([211.5, 204.5])
 W, H = 800, 800
 focal_x, focal_y = 1111.111084, 1111.111084
-viewmat = torch.tensor([[-0.929776, -0.269164, 0.251130, 0.000000],
-                        [-0.368125, 0.679831, -0.634282, 0.000000],
-                        [-0.000000, -0.682188, -0.731177, 0.000000],
-                        [0.000000, -0.000000, 4.031129, 1.000000]])
+viewmat = torch.tensor([[0.929775, 0.185817, -0.317789, 0.000000],
+                        [0.368127, -0.469316, 0.802636, 0.000000],
+                        [0.000000, -0.863258, -0.504763, 0.000000],
+                        [-0.000000, -0.000000, 4.031129, 1.000000]])
 viewmat = viewmat.T
-# quat = np.quaternion( 0.513834, 0.555851, 0.482728, 0.440429)
-# q_rot = torch.tensor([[0.145993, 0.989265, -0.006458],
-#                       [0.084034, -0.005897, 0.996445],
-#                       [0.985710, -0.146016, -0.083993]])
-# q_rot = q_rot.T
-# scale = torch.tensor([0.045963, 0.045963])
-# p_world = torch.tensor([-0.456891, 1.104019, 1.234447])
-# normal_o = torch.tensor([0.862738, 0.307285, -0.401571])
-
-q_rot = torch.tensor([[0.145993, 0.989265, -0.006458],
-                      [0.084034, -0.005897, 0.996445],
-                      [0.985710, -0.146016, -0.083993]])
+# q_rot = torch.tensor([[-0.763851, 0.161131, -0.624954],
+#                       [-0.601261, 0.174256, 0.779821],
+#                       [0.234555, 0.971428, -0.036224]])
+q_rot = torch.tensor([[-0.988244, 0.117472, -0.097852],
+                      [-0.120818, -0.207837, 0.970673],
+                      [0.093689, 0.971084, 0.219587]])
 q_rot = q_rot.T
-scale = torch.tensor([0.045963, 0.045963, 0.045963])
-p_world = torch.tensor([-0.456891, 1.104019, 1.234447])
-normal_o = torch.tensor([0.862738, 0.307285, -0.401571])
+# scale = torch.tensor([0.007275, 0.003424, 0.036238])
+# p_world = torch.tensor([-0.340799, -0.514625, 0.899377])
+# normal_o = torch.tensor([-0.575693, 0.381052, -0.723448])
+scale = torch.tensor([0.005788, 0.002608, 0.036238])
+p_world = torch.tensor([-0.350404, -0.504902, 0.902317])
+normal_o = torch.tensor([-0.444592, 0.627896, -0.638815])
 p_world = p_world.clone().detach().requires_grad_(True)
 scale = scale.clone().detach().requires_grad_(True)
 normal_o = normal_o.clone().detach().requires_grad_(True)
-kappa = 0.3
+kappa = 5.
 
 def compute_depth(p_world, scale, q_rot, viewmat, pixf, focal_x, focal_y):
 
@@ -186,6 +184,8 @@ def analytic_grad_depth(p_world, scale, q_rot, viewmat, pixf, focal_x, focal_y, 
     dTdn = torch.zeros_like(normal_o)
     p_world_1 = p_world.clone().detach().requires_grad_(True)
     normal_o_1 = normal_o.clone().detach().requires_grad_(True)
+    scale = scale.clone().detach().requires_grad_(True)
+    scale = torch.nn.parameter.Parameter(scale)
     G2W = torch.eye(4)
     G2W[:3,:3] = q_rot
     G2W[:3,3] = p_world_1
@@ -270,38 +270,85 @@ def analytic_grad_depth(p_world, scale, q_rot, viewmat, pixf, focal_x, focal_y, 
     dTdx = dT_dGW[:3,3]
     dogdscale = -ray_origin1 / 3 / scale**2
     drgdscale = -ray_direction / 3 / scale**2
-    dTds = dTdog * dogdscale + dTdrg * drgdscale
-    # T = analytic_integral(tn,tf,torch.tensor([10]), cos,t_star)
-
+    # dtnds = dtndog * dogdscale + dtndrg * drgdscale
+    # dtfds = dtfdog * dogdscale + dtfdrg * drgdscale
+    dTds = dTdrg * drgdscale + dTdog * dogdscale
+    T = analytic_integral(tn,tf,torch.tensor([kappa]), cos,t_star)
+    # dtn_ds
+    # make_dot(T).render('test')
     
-    # dTdVG = dTdno * dnodVG + dTdr * drVG
-    # dT_dr = torch.autograd.grad(T,ray_direction,retain_graph=True)[0]
-    # print("dTdr",dT_dr,dTdr)
-    # dT_dx = torch.autograd.grad(T,p_world_1,retain_graph=True)[0]
-    # print("dT_dx",dT_dx,dTdx)
+    # dT_dog = torch.autograd.grad(T,ray_origin1_scaled,retain_graph=True)[0]
+    # print("dT_dog",dT_dog,dTdog)
+    # dT_drg = torch.autograd.grad(T,ray_direction_scaled,retain_graph=True)[0]
+    # print("dT_drg",dT_drg,dTdrg)
+    # dtn_dog = torch.autograd.grad(tn,ray_origin1_scaled,retain_graph=True)[0]
+    # dtf_dog = torch.autograd.grad(tf,ray_origin1_scaled,retain_graph=True)[0]
+    # print("dtn_dog",dtn_dog,dtndog) 
+    # print("dtf_dog",dtf_dog,dtfdog) 
+    # dtn_drg = torch.autograd.grad(tn,ray_direction_scaled,retain_graph=True)[0]
+    # dtf_drg = torch.autograd.grad(tf,ray_direction_scaled,retain_graph=True)[0]
+    # print("dtn_drg",dtn_drg,dtndrg) 
+    # print("dtf_drg",dtf_drg,dtfdrg) 
+    # dogdscale_0 = torch.autograd.grad(ray_origin1_scaled[0],scale,retain_graph=True)[0]
+    # print("dogdscale_0",dogdscale_0[0],dogdscale[0])
+    
+    # dogdscale_1 = torch.autograd.grad(ray_origin1_scaled[1],scale,retain_graph=True)[0]
+    # print("dogdscale_1",dogdscale_1[1],dogdscale[1])
+    # dogdscale_2 = torch.autograd.grad(ray_origin1_scaled[2],scale,retain_graph=True)[0]
+    # print("dogdscale_2",dogdscale_2[2],dogdscale[2])
+    
+    # dog_dscale = dogdscale_0 + dogdscale_1 + dogdscale_2
+    
+    # drgdscale_0 = torch.autograd.grad(ray_direction_scaled[0],scale,retain_graph=True)[0]
+    # print("drgdscale_0",drgdscale_0,drgdscale[0])
+    
+    # drgdscale_1 = torch.autograd.grad(ray_direction_scaled[1],scale,retain_graph=True)[0]
+    # print("drgdscale_1",drgdscale_1,drgdscale[1])
+    
+    # drgdscale_2 = torch.autograd.grad(ray_direction_scaled[2],scale,retain_graph=True)[0]
+    # print("drgdscale_2",drgdscale_2,drgdscale[2])
+
+
+    # drg_dscale = drgdscale_0 + drgdscale_1 + drgdscale_2
+    
+    # dtnds = dtn_dog * dog_dscale + dtn_drg * drg_dscale
+    # dtfds = dtf_dog * dog_dscale + dtf_drg * drg_dscale
+    # dtn_ds = torch.autograd.grad(tn,scale,retain_graph=True)[0]
+    # dtf_ds = torch.autograd.grad(tf,scale,retain_graph=True)[0]
+    # print("dtnds",dtnds,dtn_ds)
+    # print("dtfds",dtfds,dtf_ds)
+    # dT_dtn = torch.autograd.grad(T,tn,retain_graph=True)[0]
+    # dT_dtf = torch.autograd.grad(T,tf,retain_graph=True)[0]
+    # print("dT_dtn",dT_dtn,dTdtn)
+    # print("dT_dtf",dT_dtf,dTdtf)
+    
+    # dTds = dTdtn * dtnds + dtfds * dTdtf
+    dT_ds = torch.autograd.grad(T,scale,retain_graph=True)[0]
+    print("dT_ds",dT_ds,dTds)
     
 
     return dTdx, dTdn, dTds
     
     
 # print(1 - analytic_integral(-0.045963 *3,0.045963 *3,torch.tensor([50]),1.0,0))
-# t_star,tf,tn,cos = compute_depth(p_world, scale, q_rot, viewmat, pixf, focal_x, focal_y)
+t_star,tf,tn,cos = compute_depth(p_world, scale, q_rot, viewmat, pixf, focal_x, focal_y)
 
-# T = analytic_integral(tn,
-#                         tf,
-#                         torch.tensor([10]), 
-#                         cos,t_star)
+T = analytic_integral(tn,
+                        tf,
+                        torch.tensor([kappa]), 
+                        cos,t_star)
 # dTdtn = torch.autograd.grad(T,tn,retain_graph=True)[0]
 # dTdtf = torch.autograd.grad(T,tf,retain_graph=True)[0]
 # dTddepth = torch.autograd.grad(T,t_star,retain_graph=True)[0]
 # dTdcos = torch.autograd.grad(T,cos,retain_graph=True)[0]
 # dTdx = torch.autograd.grad(T,p_world,retain_graph=True)[0]
 # dTdn = torch.autograd.grad(T,normal_o,retain_graph=True)[0] 
-# dTds = torch.autograd.grad(T,scale,retain_graph=True)[0] 
+# dTds = torch.autograd.grad(T,scale,retain_graph=True)[0]
+# print(dTds,dT_dscale) 
 # # dLdx = torch.zeros_like(p_world)
-# dT_ddepth, dT_dtn, dT_dtf, dT_dcos = analytic_diff(tn,tf,torch.tensor([10]), cos,t_star)
+dT_ddepth, dT_dtn, dT_dtf, dT_dcos = analytic_diff(tn,tf,torch.tensor([kappa]), cos,t_star)
 
-# dT_dx, dT_dn, dT_ds = analytic_grad_depth(p_world, scale, q_rot, viewmat, pixf, focal_x, focal_y, dTddepth, dT_dtn, dT_dtf, dT_dcos,T)
+dT_dx, dT_dn, dT_ds = analytic_grad_depth(p_world, scale, q_rot, viewmat, pixf, focal_x, focal_y, dT_ddepth, dT_dtn, dT_dtf, dT_dcos,T)
 
 
 
@@ -311,16 +358,16 @@ def analytic_grad_depth(p_world, scale, q_rot, viewmat, pixf, focal_x, focal_y, 
 # print(dT_dcos, dTdcos)
 # print(dT_dx, dTdx)
 # print(dT_dn, dTdn)
-# print(dT_ds,dTds)
+# print(dT_ds, dTds)
 
-x = torch.rand(3,1).requires_grad_(True)
-a = 10 * x.exp()
-L = L.sum()
-dLda = torch.autograd.grad(L,a,retain_graph=True)[0]
-dLdp = torch.autograd.grad(L,p_world,retain_graph=True)[0]
+# x = torch.rand(3,1).requires_grad_(True)
+# a = 10 * x.exp()
+# L = L.sum()
+# dLda = torch.autograd.grad(L,a,retain_graph=True)[0]
+# dLdp = torch.autograd.grad(L,p_world,retain_graph=True)[0]
 
-dL_dp = viewmat[:3,:3].T @ dLda
-print(dL_dp,dLdp) 
+# dL_dp = viewmat[:3,:3].T @ dLda
+# print(dL_dp,dLdp) 
 # tn = 0.01
 # tf = 100
 # print(autodiff(tn,tf,0.1,cos,t_star,p_world,ray_origin1,ray_direction,normal))
