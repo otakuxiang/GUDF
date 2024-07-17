@@ -2,22 +2,20 @@
 
 '''
 datas:
-dT_dscale: -11.519535 -11.063791 -1.385012
 pixf: 211.500000 204.500000
 W H: 800 800
 focal_x focal_y: 1111.111084 1111.111084
-viewmat: 0.929775 0.185817 -0.317789 0.000000 
-0.368127 -0.469316 0.802636 0.000000 
-0.000000 -0.863258 -0.504763 0.000000 
--0.000000 0.000000 4.031129 1.000000 
-quat: 0.076658 -0.001339 0.624664 0.777121
+V2G: -0.103471 -0.994362 0.023180 0.000000 
+-0.574937 0.078811 0.814393 0.000000 
+-0.811629 0.070940 -0.579850 0.000000 
+2.230194 -0.725128 2.410282 1.000000 
 q_rot:
--0.988244 0.117472 -0.097852 
--0.120818 -0.207837 0.970673 
-0.093689 0.971084 0.219587 
-scale: 0.005788 0.002608 0.036238
-normal: -0.444592 0.627896 -0.638815
-p_world: -0.350404 -0.504902 0.902317
+0.054889 -0.419706 0.905999 
+-0.932433 -0.346101 -0.103842 
+0.357150 -0.839083 -0.410345 
+scale: 0.010463 0.002334 0.031059
+normal: 0.023180 0.814393 -0.579850
+p_world: -0.378329 -0.528044 0.927960
 kappa: 5.000000
 '''
 from re import T
@@ -25,7 +23,8 @@ import torch
 import quaternion
 import numpy as np
 from torchviz import make_dot
-dT_dscale = torch.tensor([-4522.342773, -4771.300781, -170.739288])
+# torch.set_default_dtype(torch.float64)
+# dT_dscale = torch.tensor([-4522.342773, -4771.300781, -170.739288])
 pixf = torch.tensor([211.5, 204.5])
 W, H = 800, 800
 focal_x, focal_y = 1111.111084, 1111.111084
@@ -33,32 +32,33 @@ viewmat = torch.tensor([[0.929775, 0.185817, -0.317789, 0.000000],
                         [0.368127, -0.469316, 0.802636, 0.000000],
                         [0.000000, -0.863258, -0.504763, 0.000000],
                         [-0.000000, -0.000000, 4.031129, 1.000000]])
-viewmat = viewmat.T
-# q_rot = torch.tensor([[-0.763851, 0.161131, -0.624954],
-#                       [-0.601261, 0.174256, 0.779821],
-#                       [0.234555, 0.971428, -0.036224]])
-q_rot = torch.tensor([[-0.988244, 0.117472, -0.097852],
-                      [-0.120818, -0.207837, 0.970673],
-                      [0.093689, 0.971084, 0.219587]])
-q_rot = q_rot.T
-# scale = torch.tensor([0.007275, 0.003424, 0.036238])
-# p_world = torch.tensor([-0.340799, -0.514625, 0.899377])
-# normal_o = torch.tensor([-0.575693, 0.381052, -0.723448])
-scale = torch.tensor([0.005788, 0.002608, 0.036238])
-p_world = torch.tensor([-0.350404, -0.504902, 0.902317])
-normal_o = torch.tensor([-0.444592, 0.627896, -0.638815])
+# viewmat = viewmat.T
+V2G = torch.tensor([
+    [-0.103471, -0.994362, 0.023180, 0.000000],
+    [-0.574937, 0.078811, 0.814393, 0.000000],
+    [-0.811629, 0.070940, -0.579850, 0.000000],
+    [2.230194, -0.725128, 2.410282, 1.000000]
+]).T
+
+q_rot = torch.tensor([[0.054889, -0.419706, 0.905999],
+                      [-0.932433, -0.346101, -0.103842],
+                      [0.357150, -0.839083, -0.410345]]).T
+scale = torch.tensor([0.010463, 0.002334, 0.031059])
+p_world = torch.tensor([-0.378329, -0.528044, 0.927960])
+normal_o = torch.tensor([0.023180, 0.814393, -0.579850])
 p_world = p_world.clone().detach().requires_grad_(True)
 scale = scale.clone().detach().requires_grad_(True)
 normal_o = normal_o.clone().detach().requires_grad_(True)
 kappa = 5.
 
-def compute_depth(p_world, scale, q_rot, viewmat, pixf, focal_x, focal_y):
+def compute_depth(p_world, scale, q_rot, viewmat, pixf, focal_x, focal_y, V2G = None):
 
-    G2W = torch.eye(4)
-    G2W[:3,:3] = q_rot
-    G2W[:3,3] = p_world
-    G2V = viewmat @ G2W
-    V2G = torch.linalg.inv(G2V)
+    if V2G is None:
+        G2W = torch.eye(4)
+        G2W[:3,:3] = q_rot
+        G2W[:3,3] = p_world
+        G2V = viewmat @ G2W
+        V2G = torch.linalg.inv(G2V)
 
     # compute the ray origin and direction
     # ray_origin0 = -viewmat[:3, :3].T @ viewmat[:3, 3:4]
@@ -77,7 +77,7 @@ def compute_depth(p_world, scale, q_rot, viewmat, pixf, focal_x, focal_y):
 
     ray_origin1_scaled = ray_origin1 / 3 / scale
     ray_direction_scaled = ray_direction / 3 / scale 
-    normal_scaled = normal / 3 / scale
+
 
     A = ray_direction_scaled.dot(ray_direction_scaled)
     B = 2 * (ray_origin1_scaled.dot(ray_direction_scaled))
@@ -153,6 +153,9 @@ def analytic_diff(tn,tf,kappa,cos,depth):
     dT_dA = C / B
     dT_dB = - A * C / B2
     dT_dC = A / B
+    print("dT_dA",dT_dA)
+    print("dT_dB",dT_dB)
+    print("dT_dC",dT_dC)
     dT_dkappa =  dT_dA * dA_dkappa + dT_dB * dB_dkappa + dT_dC * dC_dkappa
     dB_ddepth = cos * kappa * E
     dC_ddepth = cos * kappa * F
@@ -179,18 +182,21 @@ def analytic_diff(tn,tf,kappa,cos,depth):
     return dT_ddepth, dTdtn, dTdtf, dTdcos
 
 # backward function for compute_depth
-def analytic_grad_depth(p_world, scale, q_rot, viewmat, pixf, focal_x, focal_y, dTddepth, dTdtn, dTdtf, dTdcos,T):
+def analytic_grad_depth(p_world, scale, q_rot, viewmat, pixf, focal_x, focal_y, dTddepth, dTdtn, dTdtf, dTdcos,T,V2G=None):
     dTdx = torch.zeros_like(p_world)
     dTdn = torch.zeros_like(normal_o)
     p_world_1 = p_world.clone().detach().requires_grad_(True)
     normal_o_1 = normal_o.clone().detach().requires_grad_(True)
     scale = scale.clone().detach().requires_grad_(True)
-    scale = torch.nn.parameter.Parameter(scale)
-    G2W = torch.eye(4)
-    G2W[:3,:3] = q_rot
-    G2W[:3,3] = p_world_1
-    G2V = viewmat @ G2W
-    V2G = torch.linalg.inv(G2V)
+    if V2G is None:
+        G2W = torch.eye(4)
+        G2W[:3,:3] = q_rot
+        G2W[:3,3] = p_world_1
+        G2V = viewmat @ G2W
+        V2G = torch.linalg.inv(G2V)
+    else:
+        G2V = torch.linalg.inv(V2G)
+    
 
     ray_origin1 = V2G[:3, 3]
     ray_direction_0 = torch.tensor([(pixf[0] - W/2)/focal_x, (pixf[1] - H/2)/focal_y, 1.0])
@@ -218,12 +224,13 @@ def analytic_grad_depth(p_world, scale, q_rot, viewmat, pixf, focal_x, focal_y, 
     # print("ddepth_dn",ddepth_dn,ddepthdn)
 
     dTdno = dTddepth * ddepthdn + dTdcos * dcosdn
+    print("dTdno",dTdno)
     dTdn[0] = dTdno[0] * V2G[0,0] + dTdno[1] * V2G[1,0] + dTdno[2] * V2G[2,0]
     dTdn[1] = dTdno[0] * V2G[0,1] + dTdno[1] * V2G[1,1] + dTdno[2] * V2G[2,1]
     dTdn[2] = dTdno[0] * V2G[0,2] + dTdno[1] * V2G[1,2] + dTdno[2] * V2G[2,2]
     
     ray_origin1_scaled = ray_origin1 / 3 / scale
-    ray_direction_scaled = ray_direction / 3 / scale 
+    ray_direction_scaled = ray_direction / 3 / scale
     
     
     
@@ -234,6 +241,7 @@ def analytic_grad_depth(p_world, scale, q_rot, viewmat, pixf, focal_x, focal_y, 
     sd = delta.sqrt()
     tn = (-B - sd) / (2*A)
     tf = (-B + sd) / (2*A)
+    # print(tn,tf)
     tnogrg = (ray_origin1_scaled + tn * ray_direction_scaled).dot(ray_direction_scaled)
     tfogrg = (ray_origin1_scaled + tf * ray_direction_scaled).dot(ray_direction_scaled)
     dtndrg = - tn / tnogrg * (ray_origin1_scaled + tn * ray_direction_scaled)
@@ -243,6 +251,7 @@ def analytic_grad_depth(p_world, scale, q_rot, viewmat, pixf, focal_x, focal_y, 
     dTdog = dTdtn * dtndog + dTdtf * dtfdog
     dTdrg = dTdtn * dtndrg + dTdtf * dtfdrg
     # dtndr = - tn /  
+    
     dTdVG = torch.zeros_like(V2G)
     dTdo = dTdog / 3 / scale + dTddepth * ddepth_do
     dTdr = dTdrg / 3 / scale + dTddepth * ddepth_dr + dTdcos * dcosdr
@@ -278,9 +287,10 @@ def analytic_grad_depth(p_world, scale, q_rot, viewmat, pixf, focal_x, focal_y, 
     # make_dot(T).render('test')
     
     # dT_dog = torch.autograd.grad(T,ray_origin1_scaled,retain_graph=True)[0]
-    # print("dT_dog",dT_dog,dTdog)
+    print("dT_dog",dTdog)
     # dT_drg = torch.autograd.grad(T,ray_direction_scaled,retain_graph=True)[0]
-    # print("dT_drg",dT_drg,dTdrg)
+    print("dT_drg",dTdrg)
+    print("dT_ds",dTds)
     # dtn_dog = torch.autograd.grad(tn,ray_origin1_scaled,retain_graph=True)[0]
     # dtf_dog = torch.autograd.grad(tf,ray_origin1_scaled,retain_graph=True)[0]
     # print("dtn_dog",dtn_dog,dtndog) 
@@ -323,20 +333,39 @@ def analytic_grad_depth(p_world, scale, q_rot, viewmat, pixf, focal_x, focal_y, 
     # print("dT_dtf",dT_dtf,dTdtf)
     
     # dTds = dTdtn * dtnds + dtfds * dTdtf
-    dT_ds = torch.autograd.grad(T,scale,retain_graph=True)[0]
-    print("dT_ds",dT_ds,dTds)
+    # dT_ds = torch.autograd.grad(T,scale,retain_graph=True)[0]
+    # print("dT_ds",dT_ds,dTds)
     
 
     return dTdx, dTdn, dTds
     
     
 # print(1 - analytic_integral(-0.045963 *3,0.045963 *3,torch.tensor([50]),1.0,0))
-t_star,tf,tn,cos = compute_depth(p_world, scale, q_rot, viewmat, pixf, focal_x, focal_y)
-
-T = analytic_integral(tn,
-                        tf,
-                        torch.tensor([kappa]), 
-                        cos,t_star)
+# p_world = p_world.double()
+# normal_o = normal_o.double()
+scale = scale.double() 
+# q_rot = q_rot.double()
+# viewmat = viewmat.double()
+# pixf = pixf.double()
+t_star,tf,tn,cos = compute_depth(p_world, scale, q_rot, viewmat, pixf, focal_x, focal_y,V2G)
+print("t_star",t_star)
+print("tn",tn)
+print("tf",tf)
+print("cos",cos)
+# T = analytic_integral(tn,
+#                         tf,
+#                         torch.tensor([kappa]), 
+#                         cos,t_star)
+# ttn = analytic_integral(0,
+#                         tn,
+#                         torch.tensor([kappa]), 
+#                         cos,t_star)
+# ttf = analytic_integral(0,
+#                         tf,
+#                         torch.tensor([kappa]), 
+#                         cos,t_star)
+# intw = ttn - ttf
+# print(intw, 1 - T)
 # dTdtn = torch.autograd.grad(T,tn,retain_graph=True)[0]
 # dTdtf = torch.autograd.grad(T,tf,retain_graph=True)[0]
 # dTddepth = torch.autograd.grad(T,t_star,retain_graph=True)[0]
@@ -344,11 +373,27 @@ T = analytic_integral(tn,
 # dTdx = torch.autograd.grad(T,p_world,retain_graph=True)[0]
 # dTdn = torch.autograd.grad(T,normal_o,retain_graph=True)[0] 
 # dTds = torch.autograd.grad(T,scale,retain_graph=True)[0]
-# print(dTds,dT_dscale) 
-# # dLdx = torch.zeros_like(p_world)
-dT_ddepth, dT_dtn, dT_dtf, dT_dcos = analytic_diff(tn,tf,torch.tensor([kappa]), cos,t_star)
+# # print(dTds,dT_dscale) 
+# # # dLdx = torch.zeros_like(p_world)
+# tn = tn.double()
+# tf = tf.double()
+# t_star = t_star.double()
+# cos = cos.double()
 
-dT_dx, dT_dn, dT_ds = analytic_grad_depth(p_world, scale, q_rot, viewmat, pixf, focal_x, focal_y, dT_ddepth, dT_dtn, dT_dtf, dT_dcos,T)
+dT_ddepth, dT_dtn, dT_dtf, dT_dcos = analytic_diff(tn,tf,torch.tensor([kappa]), cos,t_star)
+print("dT_dtn",dT_dtn)
+print("dT_dtf",dT_dtf)
+print("dT_dcos",dT_dcos)
+
+# convert all input to double type
+
+# focal_x = focal_x.double()
+# focal_y = focal_y.double()
+# dT_ddepth = dT_ddepth.double()
+# dT_dtn = dT_dtn.double()
+# dT_dtf = dT_dtf.double()
+# dT_dcos = dT_dcos.double()
+dT_dx, dT_dn, dT_ds = analytic_grad_depth(p_world, scale, q_rot, viewmat, pixf, focal_x, focal_y, dT_ddepth, dT_dtn, dT_dtf, dT_dcos,T,V2G)
 
 
 

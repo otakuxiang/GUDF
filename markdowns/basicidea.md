@@ -77,9 +77,14 @@ $$
 \begin{align}
     T &= A\exp(-\kappa(Y(f(r(t_f))) - Y(f(r(t_n)))))\\
     &= A\exp(\ln(1+e^{\kappa f(r(t_n))}) - \ln(1+e^{\kappa f(r(t_f))})) \\
-    &= \frac{A(1+e^{\kappa f(r(t_n))})}{1+e^{\kappa f(r(t_f))}}
+    &= \frac{A(1+e^{\kappa f(r(t_n))})}{1+e^{\kappa f(r(t_f))}} \\
+    T(t) &= \frac{A(1+e^{\kappa f(r(0))})}{1+e^{\kappa f(r(t))}} \\
+    w(t) &= σ(t)T(t) = -T'(t) \\
+    \int_{t_n}^{t_f}w(t)dt &= -\int_{t_n}^{t_f}T'(t)dt \\
+    &= T(t_n) - T(t_f)
 \end{align}
 $$
+
 let $B=(1+e^{\kappa f(r(t_f))}),C=(1+e^{\kappa f(r(t_n))})$ The backpropagation of the transmittance is:
 $$
 \begin{align}
@@ -212,7 +217,7 @@ $$
 \end{align}
 $$
 
-### TODO: 
+## TODO: 
 1. Assume the weight of each point is a gaussian distribution:
    $$
    \sigma(t)\exp(-\int_{0}^{t}\sigma(s)ds) = G(t,t^*,\Sigma)= -\frac{dT}{dt}(t)   
@@ -228,3 +233,15 @@ $$
    T = \exp(-\int_{t_n}^{t_f}\sigma(t)dt) =\exp(-(\int_0^{t_f}\sigma(t)dt-\int_{0}^{t_n}\sigma(t)dt)) = \frac{\exp(-\int_0^{t_f}\sigma(t)dt)}{\exp(-\int_{0}^{t_n}\sigma(t)dt)} 
    \end{align}
    $$
+2. Suppose the SDF function is defined as a set of basis functions $B_x(x),B_y(y),B_z(z)$, assume the center is $(c_x,c_y,c_z)$ and the point is $(o_x + t d_x,o_y + t d_y,o_z + t d_z)$, then the SDF can be computed by:
+$$
+    f(t) = B_x(o_x + t d_x - c_x)B_y(o_y + t d_y - c_y) B_z(o_z + t d_z - c_z)
+$$
+Assuming the basis functions are polynomials of degree $n$:
+$$
+\begin{align}
+B_x(x) &= \sum_{i=0}^{n}a_0^ix^i,\; B_y(y) = \sum_{i=0}^{n}a_1^iy^i,\; B_z(z) = \sum_{i=0}^{n}a_2^iz^i  \\
+f(x,y,z) &= 
+\end{align}
+$$
+

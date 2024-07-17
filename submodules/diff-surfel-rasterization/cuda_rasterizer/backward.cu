@@ -21,6 +21,7 @@ __device__ float computeOpacityGUDF(const glm::vec3 &p_world, const float *norma
 	const glm::vec4 &quat, const glm::vec3 &scale, float2 &t_range, float* dT_dkappa, float *dT_dV2G,glm::vec3 &dT_dnormal3D,
 	float *dT_dscale
 ){ 
+	const glm::vec<3,double,glm::packed_highp> scaled(scale[0],scale[1],scale[2]);
 	const glm::vec3 cam_pos = glm::vec3(view2gaussian[12], view2gaussian[13], view2gaussian[14]);
 	glm::vec3 ray_view = glm::normalize(glm::vec3((pixf.x - W / 2.0f) / focal_x,
 		(pixf.y - H / 2.0f) / focal_y, 1));		
@@ -44,8 +45,8 @@ __device__ float computeOpacityGUDF(const glm::vec3 &p_world, const float *norma
 	glm::vec3 ddepthdr = - don/ dnd / dnd * normal_g;
 	glm::vec3 ddepthdo = - normal_g / dnd; 
 
-	glm::vec3 ray_o_scaled = glm::vec3(cam_pos[0] / 3 / scale[0],cam_pos[1] / 3 / scale[1],cam_pos[2] / 3 / scale[2]);
-	glm::vec3 ray_d_scaled = glm::vec3(ray_gauss[0] / 3 / scale[0],ray_gauss[1] / 3 / scale[1],ray_gauss[2] / 3 / scale[2]);
+	glm::vec3 ray_o_scaled = glm::vec3(cam_pos[0] / 3 / scaled[0],cam_pos[1] / 3 / scaled[1],cam_pos[2] / 3 / scaled[2]);
+	glm::vec3 ray_d_scaled = glm::vec3(ray_gauss[0] / 3 / scaled[0],ray_gauss[1] / 3 / scaled[1],ray_gauss[2] / 3 / scaled[2]);
 	// compute the ray-ellipse intersection in the 2D plane
 
 	float A = glm::dot(ray_d_scaled, ray_d_scaled); 
@@ -59,7 +60,7 @@ __device__ float computeOpacityGUDF(const glm::vec3 &p_world, const float *norma
 	float sd = sqrt(delta);
 	float tn = (-B - sd) / (2*A);
 	float tf = (-B + sd) / (2*A);
-
+	float depth_o = glm::dot(-cam_pos,normal_g) / glm::dot(ray_gauss,normal_g);
 	if(tf < depth || tn > depth){
 		// intersection is outside the ellipse
 		return 1.0f;
@@ -75,8 +76,8 @@ __device__ float computeOpacityGUDF(const glm::vec3 &p_world, const float *norma
 	// compute the opacity
 	t_range.y = tf;
 	t_range.x = tn;
-	float ftn = cos_theta * (depth - tn);
-	float ftf = cos_theta * (depth - tf);
+	float ftn = cos_theta * (depth_o - tn);
+	float ftf = cos_theta * (depth_o - tf);
 	float E = expf(kappa * ftf);
 	float F = expf(kappa * ftn);
 	const float kappacos = kappa * cos_theta;
@@ -115,9 +116,9 @@ __device__ float computeOpacityGUDF(const glm::vec3 &p_world, const float *norma
 	// dtndog = - p_tn / tnogrg; dtfdog = - p_tf / tfogrg;
 	glm::vec3 dTdog = - dTdtn * p_tn / tnogrg - dTdtf * p_tf / tfogrg;
 
-	glm::vec3 dTdo = glm::vec3(dTdog[0] / 3 / scale[0],dTdog[1] / 3 / scale[1],dTdog[2] / 3 / scale[2]);
+	glm::vec3 dTdo = glm::vec3(dTdog[0] / 3 / scaled[0],dTdog[1] / 3 / scaled[1],dTdog[2] / 3 / scaled[2]);
 	dTdo = dTdo + dT_ddepth * ddepthdo;
-	glm::vec3 dTdr = glm::vec3(dTdrg[0] / 3 / scale[0],dTdrg[1] / 3 / scale[1],dTdrg[2] / 3 / scale[2]);
+	glm::vec3 dTdr = glm::vec3(dTdrg[0] / 3 / scaled[0],dTdrg[1] / 3 / scaled[1],dTdrg[2] / 3 / scaled[2]);
 	dTdr = dTdr + dT_ddepth * ddepthdr + dTdcos * dcosdr; 
 
 	dT_dV2G[0] = dTdr[0] * ray_view[0] + dTdno[0] * normal[0];
@@ -136,38 +137,52 @@ __device__ float computeOpacityGUDF(const glm::vec3 &p_world, const float *norma
 	dT_dV2G[13] = dTdo[1]; 
 	dT_dV2G[14] = dTdo[2];
 	dT_dV2G[15] = 0;
+	glm::vec3 drg_dscale(0,0,0);
+	double s02 = 1 / (scaled[0] * scaled[0]);
+	double s12 = 1 / (scaled[1] * scaled[1]);
+	double s22 = 1 / (scaled[2] * scaled[2]);
+	drg_dscale[0] = -ray_gauss[0] / 3 * s02;
+	drg_dscale[1] = -ray_gauss[1] / 3 * s12;
+	drg_dscale[2] = -ray_gauss[2] / 3 * s22;
 
-	dT_dscale[0] = -ray_gauss[0] / 3 / (scale[0]+1e-5) / (scale[0] + 1e-5);
-	dT_dscale[1] = -ray_gauss[1] / 3 / (scale[1]+1e-5) / (scale[1]+1e-5);
-	dT_dscale[2] = -ray_gauss[2] / 3 / (scale[2]+1e-5) / (scale[2]+1e-5);
+	glm::vec3 dog_dscale(0,0,0);
+	dog_dscale[0] = -cam_pos[0] / 3 * s02;
+	dog_dscale[1] = -cam_pos[1] / 3 * s12;
+	dog_dscale[2] = -cam_pos[2] / 3 * s22;
+
+	dT_dscale[0] = dTdrg[0] * drg_dscale[0] + dTdog[0] * dog_dscale[0];
+	dT_dscale[1] = dTdrg[1] * drg_dscale[1] + dTdog[1] * dog_dscale[1];
+	dT_dscale[2] = dTdrg[2] * drg_dscale[2] + dTdog[2] * dog_dscale[2];
 	// check if dT_dscale is too large
-	// if( isnan(dT_dscale[0]) || isnan(dT_dscale[1]) || isnan(dT_dscale[2]) || isinf(dT_dscale[0]) || isinf(dT_dscale[1]) || isinf(dT_dscale[2]) ){
-	
-	// 	printf("dT_dscale is nan or inf!\n");
-	// 	printf("current parameters");
-	// 	printf("p_world: %f %f %f", p_world.x, p_world.y, p_world.z); 
-	// 	printf("normal: %f %f %f", normal[0], normal[1], normal[2]); 
-	// 	printf("kappa: %f", kappa); 
-	// 	printf("depth: %f", depth); 
-	// 	printf("W: %d", W); 
-	// 	printf("H: %d", H); 
-	// 	printf("focal_x: %f", focal_x); 
-	// 	printf("focal_y: %f", focal_y); 
-	// 	printf("view2gaussian:");
-	// 	for(int i = 0; i < 16; i++){
-	// 		printf(" %f", view2gaussian[i]);
+	// if(pixf.x == 211.5 && pixf.y ==  204.5){
+	// 	printf("dT_dscale: %f %f %f\n", dT_dscale[0], dT_dscale[1], dT_dscale[2]);
+	// 	printf("dT_drg %f %f %f\n", dTdrg[0], dTdrg[1], dTdrg[2]);
+	// 	printf("dT_dog %f %f %f\n", dTdog[0], dTdog[1], dTdog[2]);
+	// 	printf("dTdno %f %f %f\n", dTdno[0], dTdno[1], dTdno[2]);
+	// 	printf("pixf: %f %f\n",pixf.x,pixf.y);
+	// 	printf("W H: %d %d\n",W,H);
+	// 	printf("focal_x focal_y: %f %f\n",focal_x,focal_y);
+	// 	// print viewmat
+	// 	printf("V2G: ");
+	// 	for(int i=0;i<4;i++){
+	// 		for(int j=0;j<4;j++){
+	// 			printf("%f ",view2gaussian[i*4+j]);
+	// 		}
+	// 		printf("\n");
 	// 	}
-	// 	printf("\n"); 
-	// 	printf("pixf: %f %f\n", pixf.x, pixf.y); 
-	// 	printf("scale: %f %f %f\n", scale.x, scale.y, scale.z);
-	// 	printf("dT_dkappa: %f\n", dT_dkappa[0]);
-	// 	printf("dT_dV2G:");
-	// 	for(int i = 0; i < 16; i++){
-	// 		printf(" %f", dT_dV2G[i]);
+	// 	// printf("quat: %f %f %f %f\n",collected_quats[j].x,collected_quats[j].y,collected_quats[j].z,collected_quats[j].w);	
+	// 	printf("q_rot:\n");
+	// 	glm::mat3 q_rot = quat_to_rotmat(quat);
+	// 	for(int i=0;i<3;i++){
+	// 		for(int j=0;j<3;j++){
+	// 			printf("%f ",q_rot[i][j]);
+	// 		}
+	// 		printf("\n");
 	// 	}
-	// 	printf("\n"); 
-	// 	printf("dT_dnormal3D: %f %f %f\n", dT_dnormal3D[0], dT_dnormal3D[1], dT_dnormal3D[2]);
-	// 	// printf("dT_dscale: %f %f %f\n", dT_dscale[0], dT_dscale[1], dT_dscale[2]);
+	// 	printf("scale: %f %f %f\n",scale.x,scale.y,scale.z); 
+	// 	printf("normal: %f %f %f\n",normal[0],normal[1],normal[2]);
+	// 	printf("p_world: %f %f %f\n",p_world.x,p_world.y,p_world.z);
+	// 	printf("kappa: %f\n",kappa);
 	// }
 
 	return A * C / B;
@@ -507,7 +522,6 @@ renderCUDA(
 	__shared__ glm::vec4 collected_quats[BLOCK_SIZE];
 	__shared__ glm::vec3 collected_scales[BLOCK_SIZE];
 	__shared__ float collected_view2gaussian[BLOCK_SIZE * 16];
-
 	// __shared__ float collected_depths[BLOCK_SIZE];
 
 	// In the forward, we stored the final value for T, the
@@ -748,34 +762,8 @@ renderCUDA(
 				{
 					atomicAdd(&(dL_dview2gaussians[global_id * 16 + ii]), dL_dT * dT_dV2G[ii]);
 				}
+				float a = atomicAdd(&dL_dscale[global_id][0], dL_dT * dT_dscale[0]);
 				
-				// if(dT_dscale[0] > 0.02){
-				// 	printf("dT_dscale: %f %f %f\n", dT_dscale[0], dT_dscale[1], dT_dscale[2]);
-				// 	printf("pixf: %f %f\n",pixf.x,pixf.y);
-				// 	printf("W H: %d %d\n",W,H);
-				// 	printf("focal_x focal_y: %f %f\n",focal_x,focal_y);
-				// 	// print viewmat
-				// 	printf("viewmat: ");
-				// 	for(int i=0;i<4;i++){
-				// 		for(int j=0;j<4;j++){
-				// 			printf("%f ",viewmat[i*4+j]);
-				// 		}
-				// 		printf("\n");
-				// 	}
-				// 	printf("quat: %f %f %f %f\n",collected_quats[j].x,collected_quats[j].y,collected_quats[j].z,collected_quats[j].w);	
-				// 	glm::mat3 q_rot = quat_to_rotmat(collected_quats[j]);
-				// 	for(int i=0;i<3;i++){
-				// 		for(int j=0;j<3;j++){
-				// 			printf("%f ",q_rot[i][j]);
-				// 		}
-				// 		printf("\n");
-				// 	}
-				// 	printf("scale: %f %f\n",collected_scales[j].x,collected_scales[j].y); 
-				// 	printf("normal: %f %f %f\n",normal[0],normal[1],normal[2]);
-				// 	printf("p_world: %f %f %f\n",p_world.x,p_world.y,p_world.z);
-				// 	printf("kappa: %f\n",collected_kappas[j]);
-				// }
-				atomicAdd(&dL_dscale[global_id][0], dL_dT * dT_dscale[0]);
 				atomicAdd(&dL_dscale[global_id][1], dL_dT * dT_dscale[1]);
 				atomicAdd(&dL_dscale[global_id][2], dL_dT * dT_dscale[2]);
 				// if( isnan(dL_dT * dT_dscale[0]) || isnan(dL_dT * dT_dscale[1]) || isnan(dL_dT * dT_dscale[2])){	

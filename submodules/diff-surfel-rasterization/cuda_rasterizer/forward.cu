@@ -42,8 +42,8 @@ __device__ float computeOpacityGUDF(const glm::vec3 &p_world, const float *norma
 	glm::vec3 ray_gauss = R * ray_view;
 	float cos_theta = glm::dot(ray_gauss, normal_g);
 	if(cos_theta < 0) cos_theta = -cos_theta; 
-	glm::vec3 ray_o_scaled = glm::vec3(cam_pos[0] / 3 / scale[0],cam_pos[1] / 3 / scale[1],cam_pos[2] / 3 / scale[2]);
-	glm::vec3 ray_d_scaled = glm::vec3(ray_gauss[0] / 3 / scale[0],ray_gauss[1] / 3 / scale[1],ray_gauss[2] / 3 / scale[2]);
+	glm::vec3 ray_o_scaled = glm::vec3(cam_pos[0] / 3 / (double)scale[0],cam_pos[1] / 3 / (double)scale[1],cam_pos[2] / 3 / (double)scale[2]);
+	glm::vec3 ray_d_scaled = glm::vec3(ray_gauss[0] / 3 / (double)scale[0],ray_gauss[1] / 3 / (double)scale[1],ray_gauss[2] / 3 / (double)scale[2]);
 	// compute the ray-ellipse intersection in the 2D plane
 
 	float A = glm::dot(ray_d_scaled, ray_d_scaled); 
