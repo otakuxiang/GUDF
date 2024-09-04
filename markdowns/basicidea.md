@@ -75,16 +75,25 @@ $$
 又有sigmoid函数的不定积分为$\int\Phi_\kappa(x)dx = \frac{1}{\kappa}\ln(1+e^{\kappa x})$ = Y(x),则有:
 $$
 \begin{align}
-    T &= A\exp(-\kappa(Y(f(r(t_f))) - Y(f(r(t_n)))))\\
-    &= A\exp(\ln(1+e^{\kappa f(r(t_n))}) - \ln(1+e^{\kappa f(r(t_f))})) \\
-    &= \frac{A(1+e^{\kappa f(r(t_n))})}{1+e^{\kappa f(r(t_f))}} \\
-    T(t) &= \frac{A(1+e^{\kappa f(r(0))})}{1+e^{\kappa f(r(t))}} \\
-    w(t) &= σ(t)T(t) = -T'(t) \\
-    \int_{t_n}^{t_f}w(t)dt &= -\int_{t_n}^{t_f}T'(t)dt \\
-    &= T(t_n) - T(t_f)
+    T &= A\exp(-\kappa(Y(f(r(t_f))) - Y(f(r(t_n))))) &\\
+    &= A\exp(\ln(1+e^{\kappa f(r(t_n))}) - \ln(1+e^{\kappa f(r(t_f))})) &\\
+    &= \frac{A(1+e^{\kappa f(r(t_n))})}{1+e^{\kappa f(r(t_f))}} &\\
+    T(t) &= \frac{A(1+e^{\kappa f(r(t_n))})}{1+e^{\kappa f(r(t))}} &\\
+    w(t) &= σ(t)T(t) = -T'(t) &\\
+    \int_{t_n}^{t_f}w(t)dt &= -\int_{t_n}^{t_f}T'(t)dt &\\
+    &= T(t_n) - T(t_f) &\\
+    depth &= \int_{t_n}^{t_f} w(t)tdt= -\int_{t_n}^{t_f} T'(t)tdt =  - (T(t)t)|^{t_f}_{t_n} + \int_{t_n}^{t_f} T(t)dt &\\
+    \int_{t_n}^{t_f} T(t)dt &= (1+e^{\kappa f(r(t_n))})\int_{t_n}^{t_f}\frac{\exp(-\kappa|\cos(\theta)|(t - t_n))}{1+\exp(-\kappa |\cos\theta|(t^* - t))}dt  &\\
+    &= (1+e^{\kappa f(r(t_n))})e^{\kappa f(r(t_n))}\int_{t_n}^{t_f}\frac{\exp({\kappa|\cos\theta|(t^* - t)})}{1+\exp({-\kappa|\cos\theta|(t^* - t)})}dt &\\ 
+    &=(1+e^{\kappa f(r(t_n))})e^{\kappa f(r(t_n))}\int_{t_n}^{t_f}\frac{1}{-\kappa|\cos\theta|}\frac{\exp({\kappa|\cos\theta|(t^* - t)})}{1+\exp({-\kappa|\cos\theta|(t^* - t)})}d(\kappa|\cos\theta|(t^* - t))
 \end{align}
 $$
-
+Note that $\int e^x / (1+e^{-x})dx = e^x - \log(e^x + 1)$, then:
+$$
+\begin{align}
+\int_{t_n}^{t_f} T(t)dt &= \frac{(1+e^{\kappa f(r(t_n))})e^{\kappa f(r(t_n))}}{-\kappa|\cos\theta|}(e^{\kappa f(r(t_f))}-e^{\kappa f(r(t_n))}+\log(e^{\kappa f(r(t_n))}+1)-\log(e^{\kappa f(r(t_f))}+1)) \\
+\end{align}
+$$
 let $B=(1+e^{\kappa f(r(t_f))}),C=(1+e^{\kappa f(r(t_n))})$ The backpropagation of the transmittance is:
 $$
 \begin{align}
