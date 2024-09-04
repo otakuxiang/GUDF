@@ -27,7 +27,42 @@ try:
     TENSORBOARD_FOUND = True
 except ImportError:
     TENSORBOARD_FOUND = False
+import numpy as np
     
+
+def gen_virtul_cam(cam, trans_noise=1.0, deg_noise=15.0):
+    Rt = np.zeros((4, 4))
+    Rt[:3, :3] = cam.R.transpose()
+    Rt[:3, 3] = cam.T
+    Rt[3, 3] = 1.0
+    C2W = np.linalg.inv(Rt)
+
+    translation_perturbation = np.random.uniform(-trans_noise, trans_noise, 3)
+    rotation_perturbation = np.random.uniform(-deg_noise, deg_noise, 3)
+    rx, ry, rz = np.deg2rad(rotation_perturbation)
+    Rx = np.array([[1, 0, 0],
+                    [0, np.cos(rx), -np.sin(rx)],
+                    [0, np.sin(rx), np.cos(rx)]])
+    
+    Ry = np.array([[np.cos(ry), 0, np.sin(ry)],
+                    [0, 1, 0],
+                    [-np.sin(ry), 0, np.cos(ry)]])
+    
+    Rz = np.array([[np.cos(rz), -np.sin(rz), 0],
+                    [np.sin(rz), np.cos(rz), 0],
+                    [0, 0, 1]])
+    R_perturbation = Rz @ Ry @ Rx
+
+    C2W[:3, :3] = C2W[:3, :3] @ R_perturbation
+    C2W[:3, 3] = C2W[:3, 3] + translation_perturbation
+    Rt = np.linalg.inv(C2W)
+    virtul_cam = Camera(100000, Rt[:3, :3].transpose(), Rt[:3, 3], cam.FoVx, cam.FoVy,
+                        cam.image_width, cam.image_height,
+                        cam.image_path, cam.image_name, 100000,
+                        trans=np.array([0.0, 0.0, 0.0]), scale=1.0, 
+                        preload_img=False, data_device = "cuda")
+    return virtul_cam
+
 #linear schedule udf opacity weight
 def weight_schedule(iteration, start_iter, end_iter, start_weight, end_weight):
     if iteration < start_iter:
@@ -74,7 +109,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if not viewpoint_stack:
             viewpoint_stack = scene.getTrainCameras().copy()
         viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
-        udfw = weight_schedule(iteration, 15001, 20000, 0., 1.0)
+        udfw = weight_schedule(iteration, 15001, 15002, 0., 1.0)
         # print(udfw)
         render_pkg = render(viewpoint_cam, gaussians, pipe, background,lamda=udfw)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
@@ -85,7 +120,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # regularization
         lambda_normal = opt.lambda_normal if iteration > 7000 else 0.0
         lambda_dist = opt.lambda_dist if iteration > 3000 else 0.0
-        lambda_scale = 2 if iteration > 15500 else 0.0
+        lambda_scale = 1.5 if iteration > 30000 else 0.0
         rend_dist = render_pkg["rend_dist"]
         rend_normal  = render_pkg['rend_normal']
         surf_normal = render_pkg['surf_normal']
@@ -171,6 +206,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
             # Optimizer step
             if iteration < opt.iterations:
+                # gaussians.clip_grad_norm(1)
                 gaussians.optimizer.step()
                 gaussians.optimizer.zero_grad(set_to_none = True)
 

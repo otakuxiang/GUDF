@@ -38,7 +38,7 @@ class GaussianModel:
         self.inverse_opacity_activation = inverse_sigmoid
         self.rotation_activation = torch.nn.functional.normalize
         def kappa_activation(kappa):
-            return 5. * torch.sigmoid(kappa)
+            return 100. * torch.sigmoid(kappa)
         self.kappa_activation = kappa_activation
 
     def __init__(self, sh_degree : int):
@@ -157,7 +157,7 @@ class GaussianModel:
 
         opacities = self.inverse_opacity_activation(0.4 * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda"))
         import math
-        kappas = inverse_sigmoid(torch.ones_like(opacities))
+        kappas = inverse_sigmoid(0.4 * torch.ones_like(opacities))
         self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
         self._features_dc = nn.Parameter(features[:,:,0:1].transpose(1, 2).contiguous().requires_grad_(True))
         self._features_rest = nn.Parameter(features[:,:,1:].transpose(1, 2).contiguous().requires_grad_(True))
@@ -190,6 +190,13 @@ class GaussianModel:
                                                     lr_delay_mult=training_args.position_lr_delay_mult,
                                                     max_steps=training_args.position_lr_max_steps)
 
+    def clip_grad_norm(self, max_norm):
+        torch.nn.utils.clip_grad_norm_(self._xyz, max_norm)
+        # torch.nn.utils.clip_grad_norm_(self._rotation, max_norm)
+        torch.nn.utils.clip_grad_norm_(self._scaling, max_norm)
+        
+        
+    
     def update_learning_rate(self, iteration):
         ''' Learning rate scheduling per step '''
         for param_group in self.optimizer.param_groups:

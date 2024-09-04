@@ -56,25 +56,29 @@ __device__ float computeOpacityGUDF(const glm::vec3 &p_world, const float *norma
 	}
 	float sd = sqrt(delta);
 	float tn = (-B - sd) / (2*A);
-	float tf = (-B + sd) / (2*A);
-
-	if(tf < depth || tn > depth){
-		// intersection is outside the ellipse
-		return 1.0f;
-	}
-	
+	float tf = (-B + sd) / (2*A);	
+	float depth_o = glm::dot(-cam_pos,normal_g) / glm::dot(ray_gauss,normal_g);
 
 	// compute the opacity
 	t_range.y = tf;
 	t_range.x = tn;
-	float ftn = cos_theta * (depth - tn);
-	float ftf = cos_theta * (depth - tf);
+	float ftn = cos_theta * (depth_o - tn);
+	float ftf = cos_theta * (depth_o - tf);
 	float E = expf(kappa * ftf);
 	float F = expf(kappa * ftn);
-	A = expf(-kappa * cos_theta * (tf - tn));
-	B = 1 + E;
-	C = 1 + F;
-	return A * C / B;
+	float lnE = kappa * ftf,lnF = kappa * ftn;
+	
+	float lnA = -kappa * cos_theta * (tf - tn) ,lnB = logf(1 + E), lnC = logf(1 + F);
+	if(isinf(E)  || isnan(E)){
+		if (lnE > 0) lnB = lnE;
+		else lnB = 1e-10;
+
+	} 
+	if(isinf(F) || isnan(F)){
+		if (lnF > 0) lnC = lnF;
+		else lnC = 1e-10;
+	} 
+	return expf(lnA + lnC - lnB);
 }
 
 // Forward method for converting the input spherical harmonics
@@ -497,14 +501,17 @@ renderCUDA(
 			collected_Tu[block.thread_rank()] = {transMats[9 * coll_id+0], transMats[9 * coll_id+1], transMats[9 * coll_id+2]};
 			collected_Tv[block.thread_rank()] = {transMats[9 * coll_id+3], transMats[9 * coll_id+4], transMats[9 * coll_id+5]};
 			collected_Tw[block.thread_rank()] = {transMats[9 * coll_id+6], transMats[9 * coll_id+7], transMats[9 * coll_id+8]};
-			collected_points3d[block.thread_rank()].x = points3d[3*coll_id];
-			collected_points3d[block.thread_rank()].y = points3d[3*coll_id+1];
-			collected_points3d[block.thread_rank()].z = points3d[3*coll_id+2];
-			collected_kappas[block.thread_rank()] = kappas[coll_id];
-			collected_quats[block.thread_rank()] = quats[coll_id];
-			for (int ii = 0; ii < 16; ii++)
-				collected_view2gaussian[16 * block.thread_rank() + ii] = view2gaussian[coll_id * 16 + ii];
-			collected_scales[block.thread_rank()] = scales[coll_id];
+			if (lambda > 0.0f){
+				collected_points3d[block.thread_rank()].x = points3d[3*coll_id];
+				collected_points3d[block.thread_rank()].y = points3d[3*coll_id+1];
+				collected_points3d[block.thread_rank()].z = points3d[3*coll_id+2];
+				collected_kappas[block.thread_rank()] = kappas[coll_id];
+				collected_quats[block.thread_rank()] = quats[coll_id];
+				for (int ii = 0; ii < 16; ii++)
+					collected_view2gaussian[16 * block.thread_rank() + ii] = view2gaussian[coll_id * 16 + ii];
+				collected_scales[block.thread_rank()] = scales[coll_id];
+			}
+			
 		}
 		block.sync();
 

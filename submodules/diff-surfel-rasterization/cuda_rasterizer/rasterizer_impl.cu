@@ -450,7 +450,7 @@ void CudaRasterizer::Rasterizer::backward(
 	// cudaMemcpy(dL_dscale_cpu, dL_dscale, 3 * P * sizeof(float),cudaMemcpyDeviceToHost);
 	// for (int i = 0; i < P*3; i++) {
 	// 	if (std::isnan(dL_dscale_cpu[i])) {
-	// 		printf("dL_dscale is nan after render");
+	// 		printf("dL_dscale is nan after render\n");
 	// 		break;
 	// 	}
 	// }
@@ -483,4 +483,12 @@ void CudaRasterizer::Rasterizer::backward(
 		(glm::vec3*)dL_dmean3D,
 		(glm::vec3*)dL_dscale,
 		(glm::vec4*)dL_drot), debug)
+
+	// cudaMemcpy(dL_dscale_cpu, dL_dscale, 3 * P * sizeof(float),cudaMemcpyDeviceToHost);
+	// for (int i = 0; i < P*3; i++) {
+	// 	if (std::isnan(dL_dscale_cpu[i])) {
+	// 		printf("dL_dscale is nan after preprocess\n");
+	// 		break;
+	// 	}
+	// }
 }

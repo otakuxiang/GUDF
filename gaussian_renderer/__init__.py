@@ -11,7 +11,7 @@
 import traceback
 import torch
 import math
-from diff_surfel_rasterization import GaussianRasterizationSettings, GaussianRasterizer
+from diff_gudf_rasterization import GaussianRasterizationSettings, GaussianRasterizer
 from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
 from utils.point_utils import depth_to_normal

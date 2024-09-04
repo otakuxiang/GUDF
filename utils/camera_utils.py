@@ -13,23 +13,24 @@ from scene.cameras import Camera
 import numpy as np
 from utils.general_utils import PILtoTorch
 from utils.graphics_utils import fov2focal
+import sys
 
 WARNED = False
 
 def loadCam(args, id, cam_info, resolution_scale):
-    orig_w, orig_h = cam_info.image.size
-
+    orig_w, orig_h = cam_info.width, cam_info.height
     if args.resolution in [1, 2, 4, 8]:
         resolution = round(orig_w/(resolution_scale * args.resolution)), round(orig_h/(resolution_scale * args.resolution))
     else:  # should be a type that converts to float
         if args.resolution == -1:
             if orig_w > 1600:
+                global_down = orig_w / 1600
                 global WARNED
                 if not WARNED:
                     print("[ INFO ] Encountered quite large input images (>1.6K pixels width), rescaling to 1.6K.\n "
                         "If this is not desired, please explicitly specify '--resolution/-r' as 1")
+                    print(f"scale {float(global_down) * float(resolution_scale)}")
                     WARNED = True
-                global_down = orig_w / 1600
             else:
                 global_down = 1
         else:
@@ -38,20 +39,20 @@ def loadCam(args, id, cam_info, resolution_scale):
         scale = float(global_down) * float(resolution_scale)
         resolution = (int(orig_w / scale), int(orig_h / scale))
 
-    if len(cam_info.image.split()) > 3:
-        import torch
-        resized_image_rgb = torch.cat([PILtoTorch(im, resolution) for im in cam_info.image.split()[:3]], dim=0)
-        loaded_mask = PILtoTorch(cam_info.image.split()[3], resolution)
-        gt_image = resized_image_rgb
-    else:
-        resized_image_rgb = PILtoTorch(cam_info.image, resolution)
-        loaded_mask = None
-        gt_image = resized_image_rgb
+
+    
+    sys.stdout.write('\r')
+    sys.stdout.write("load camera {}".format(id))
+    sys.stdout.flush()
 
     return Camera(colmap_id=cam_info.uid, R=cam_info.R, T=cam_info.T, 
-                  FoVx=cam_info.FovX, FoVy=cam_info.FovY, 
-                  image=gt_image, gt_alpha_mask=loaded_mask,
-                  image_name=cam_info.image_name, uid=id, data_device=args.data_device)
+                  FoVx=cam_info.FovX, FoVy=cam_info.FovY,
+                  image_width=resolution[0], image_height=resolution[1],
+                  image_path=cam_info.image_path,
+                  image_name=cam_info.image_name, uid=id, 
+                  preload_img=args.preload_img, 
+                  ncc_scale=args.ncc_scale,
+                  data_device=args.data_device)
 
 def cameraList_from_camInfos(cam_infos, resolution_scale, args):
     camera_list = []

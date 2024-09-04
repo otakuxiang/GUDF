@@ -147,16 +147,10 @@ class _RasterizeGaussians(torch.autograd.Function):
                 torch.save(cpu_args, "snapshot_bw.dump")
                 print("\nAn error occured in backward. Writing snapshot_bw.dump for debugging.\n")
                 raise ex
-            if grad_sh.shape[1] == 0:
+            if grad_scales.isnan().any():
                 breakpoint()
                 torch.save(cpu_args, "./debug/snapshot_bw.dump")
-                print("\grad_sh has shape 0. Writing snapshot_bw.dump for debugging.\n")
-            # if grad_scales.isnan().any():
-            #     breakpoint()
-            #     # print(scales.cpu() - cpu_args[4])
-                
-            #     torch.save(cpu_args, "./debug/snapshot_bw.dump")
-            #     print("\nNaN detected in grad_scales. Writing snapshot_bw.dump for debugging.\n")
+                print("\nNaN detected in grad_scales. Writing snapshot_bw.dump for debugging.\n")
         else:
             grad_means2D, grad_colors_precomp, grad_opacities, grad_means3D, grad_cov3Ds_precomp, grad_sh, grad_scales, grad_rotations, grad_kappas = _C.rasterize_gaussians_backward(*args)
 

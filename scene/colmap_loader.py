@@ -115,11 +115,15 @@ def read_points3D_text(path):
                 xyz = np.array(tuple(map(float, elems[1:4])))
                 rgb = np.array(tuple(map(int, elems[4:7])))
                 error = np.array(float(elems[7]))
+                if error > 2.0:
+                    continue
                 xyzs[count] = xyz
                 rgbs[count] = rgb
                 errors[count] = error
                 count += 1
-
+    xyzs = np.delete(xyzs, np.arange(count,num_points),axis=0)
+    rgbs = np.delete(rgbs, np.arange(count,num_points),axis=0)
+    errors = np.delete(errors, np.arange(count,num_points),axis=0)
     return xyzs, rgbs, errors
 
 def read_points3D_binary(path_to_model_file):
@@ -136,7 +140,7 @@ def read_points3D_binary(path_to_model_file):
         xyzs = np.empty((num_points, 3))
         rgbs = np.empty((num_points, 3))
         errors = np.empty((num_points, 1))
-
+        count = 0
         for p_id in range(num_points):
             binary_point_line_properties = read_next_bytes(
                 fid, num_bytes=43, format_char_sequence="QdddBBBd")
@@ -148,9 +152,15 @@ def read_points3D_binary(path_to_model_file):
             track_elems = read_next_bytes(
                 fid, num_bytes=8*track_length,
                 format_char_sequence="ii"*track_length)
-            xyzs[p_id] = xyz
-            rgbs[p_id] = rgb
-            errors[p_id] = error
+            if error > 2.0 or track_length < 3:
+                continue
+            xyzs[count] = xyz
+            rgbs[count] = rgb
+            errors[count] = error
+            count += 1
+    xyzs = np.delete(xyzs, np.arange(count,num_points),axis=0)
+    rgbs = np.delete(rgbs, np.arange(count,num_points),axis=0)
+    errors = np.delete(errors, np.arange(count,num_points),axis=0)
     return xyzs, rgbs, errors
 
 def read_intrinsics_text(path):

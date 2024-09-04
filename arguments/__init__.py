@@ -54,6 +54,12 @@ class ModelParams(ParamGroup):
         self._white_background = False
         self.data_device = "cuda"
         self.eval = False
+        self.preload_img = True
+        self.ncc_scale = 1.0
+        self.multi_view_num = 8
+        self.multi_view_max_angle = 30
+        self.multi_view_min_dis = 0.01
+        self.multi_view_max_dis = 1.5
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):

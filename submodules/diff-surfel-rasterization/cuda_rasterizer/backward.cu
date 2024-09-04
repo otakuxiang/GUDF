@@ -61,10 +61,7 @@ __device__ float computeOpacityGUDF(const glm::vec3 &p_world, const float *norma
 	float tn = (-B - sd) / (2*A);
 	float tf = (-B + sd) / (2*A);
 	float depth_o = glm::dot(-cam_pos,normal_g) / glm::dot(ray_gauss,normal_g);
-	if(tf < depth || tn > depth){
-		// intersection is outside the ellipse
-		return 1.0f;
-	};
+	float flagtf = depth_o < tf ? -1 : 1, flagtn = depth_o > tn ? 1 : -1;
 	glm::vec3 p_tn = ray_o_scaled + ray_d_scaled * tn;
 	glm::vec3 p_tf = ray_o_scaled + ray_d_scaled * tf;
 	
@@ -81,31 +78,59 @@ __device__ float computeOpacityGUDF(const glm::vec3 &p_world, const float *norma
 	float E = expf(kappa * ftf);
 	float F = expf(kappa * ftn);
 	const float kappacos = kappa * cos_theta;
+	float lnE = kappa * ftf,lnF = kappa * ftn;
+	float lnA = -kappacos * (tf - tn) ,lnB = logf(1+E), lnC = logf(1+F);
+	if(isinf(E)  || isnan(E)){
+		if (lnE > 0) lnB = lnE;
+		else lnB = 1e-10;
 
-	A = expf(-kappacos * (tf - tn));
-	B = 1 + E;
-	C = 1 + F;
-	float B2 = B*B;
-	float dA_dkappa = -cos_theta * (tf - tn) * A;
-	float dB_dkappa = E * ftf;
-	float dC_dkappa = F * ftn;
-	float dT_dA = C / B;
-	float dT_dB = -A * C / B2;
-	float dT_dC = A / B;
+	} 
+	if(isinf(F) || isnan(F)){
+		if (lnF > 0) lnC = lnF;
+		else lnC = 1e-10;
+	} 
+	float lncos = logf(cos_theta),lnkappa = logf(kappa),lntfd = logf(abs(tf - depth_o)),lntnd = logf(abs(depth_o - tn));
+	float lnkc = lncos + lnkappa, lntftn = logf(tf - tn);
+	float lndTdA = lnC - lnB, lndTdB = lnA + lnC - 2 * lnB, lndTdC = lnA - lnB;
+
+	// A = expf(-kappacos * (tf - tn));
+	// B = 1 + E;
+	// C = 1 + F;
+	// float B2 = B*B;
 	
-	dT_dkappa[0] = (dT_dA * dA_dkappa + dT_dB * dB_dkappa + dT_dC * dC_dkappa) ;
+
+	// float dA_dkappa = -cos_theta * (tf - tn) * A;
+	// float dB_dkappa = E * ftf;
+	// float dC_dkappa = F * ftn;
+	// float dT_dA = C / B;
+	// float dT_dB = -A * C / B2;
+	// float dT_dC = A / B;
 	
-	float dBddepth = kappacos * E;
-	float dCddepth = kappacos * F;
-	float dT_ddepth = dT_dC * dCddepth + dT_dB * dBddepth;
+	// dT_dkappa[0] = (dT_dA * dA_dkappa + dT_dB * dB_dkappa + dT_dC * dC_dkappa) ;
+	
+	// float lndAdkappa = lncos + lntftn + lnA,lndBdkappa = lnE + lncos + lntfd,
+	// 	lndCdkappa = lnF + lncos + lntnd; 
+	dT_dkappa[0] = - expf(lncos + lntftn + lnA + lndTdA) - flagtf * expf(lndTdB + lnE + lncos + lntfd) 
+		+ flagtn * expf(lndTdC + lnF + lncos + lntnd);
+	// float dBddepth = kappacos * E;
+	// float dCddepth = kappacos * F;
+	// float dT_ddepth = dT_dC * dCddepth + dT_dB * dBddepth;
+	// float lndB_ddepth = lnkc + lnE,lndCddepth = lnkc + lnF;
+	float dT_ddepth = expf(lndTdC + lnkc + lnF) - expf(lndTdB + lnkc + lnE);
 
 	// dAdtn = kappa * cos * A;  dCdtn = - F * kappa * cos
-	float dTdtn = dT_dA * kappacos * A - dT_dC * kappacos * F;
+	// float dTdtn = dT_dA * kappacos * A - dT_dC * kappacos * F;
 	// dAdtf = - kappa * cos * A; dBdtf = - E * kappa * cos
-	float dTdtf = - dT_dA * kappacos * A - dT_dB * kappacos * E;
-	// dAdcos = (tn - tf) * A * kappa, dBdcos = E * kappa * (depth - tf), dCdcos = F * kappa * (depth - tn)
-	float dTdcos = dT_dA * (tn - tf) * A * kappa + dT_dB * E * kappa * (depth - tf) + dT_dC * F * kappa * (depth - tn);
+	// float dTdtf = - dT_dA * kappacos * A - dT_dB * kappacos * E;
+	float dTdtn = expf(lndTdA + lnkc + lnA) - expf(lndTdC + lnkc + lnF);
+	float dTdtf = -expf(lndTdA + lnkc + lnA) + expf(lndTdB + lnkc + lnE);
 
+	// dAdcos = (tn - tf) * A * kappa, dBdcos = E * kappa * (depth - tf), dCdcos = F * kappa * (depth - tn)
+	// float dAdcos = (tn - tf) * A * kappa;
+	// float dBdcos = E * kappa * (depth_o - tf);
+	// float dCdcos = F * kappa * (depth_o - tn);
+	// float dTdcos = dT_dA * dAdcos + dT_dB * dBdcos + dT_dC * dCdcos;
+	float dTdcos = -expf(lndTdA + lntftn + lnkappa + lnA) - flagtf * expf(lndTdB + lntfd + lnkappa + lnE) + flagtn * expf(lndTdC + lntnd + lnkappa + lnF); 
 	glm::vec3 dTdno = dT_ddepth * ddepthdn + dTdcos * dcosdn;
 	dT_dnormal3D[0] = dTdno[0] * view2gaussian[0] + dTdno[1] * view2gaussian[1] + dTdno[2] * view2gaussian[2];
 	dT_dnormal3D[1] = dTdno[0] * view2gaussian[4] + dTdno[1] * view2gaussian[5] + dTdno[2] * view2gaussian[6];
@@ -154,11 +179,8 @@ __device__ float computeOpacityGUDF(const glm::vec3 &p_world, const float *norma
 	dT_dscale[1] = dTdrg[1] * drg_dscale[1] + dTdog[1] * dog_dscale[1];
 	dT_dscale[2] = dTdrg[2] * drg_dscale[2] + dTdog[2] * dog_dscale[2];
 	// check if dT_dscale is too large
-	// if(pixf.x == 211.5 && pixf.y ==  204.5){
-	// 	printf("dT_dscale: %f %f %f\n", dT_dscale[0], dT_dscale[1], dT_dscale[2]);
-	// 	printf("dT_drg %f %f %f\n", dTdrg[0], dTdrg[1], dTdrg[2]);
-	// 	printf("dT_dog %f %f %f\n", dTdog[0], dTdog[1], dTdog[2]);
-	// 	printf("dTdno %f %f %f\n", dTdno[0], dTdno[1], dTdno[2]);
+	// if(isnan(dT_dscale[0]) || isinf(dT_dscale[0]) || isnan(dT_dscale[1]) || isinf(dT_dscale[1]) || isnan(dT_dscale[2]) || isinf(dT_dscale[2])){
+	// 	printf("dTdcos %f\n", dTdcos);
 	// 	printf("pixf: %f %f\n",pixf.x,pixf.y);
 	// 	printf("W H: %d %d\n",W,H);
 	// 	printf("focal_x focal_y: %f %f\n",focal_x,focal_y);
@@ -185,7 +207,7 @@ __device__ float computeOpacityGUDF(const glm::vec3 &p_world, const float *norma
 	// 	printf("kappa: %f\n",kappa);
 	// }
 
-	return A * C / B;
+	return expf(lnA + lnC - lnB);
 }
 
 
@@ -599,12 +621,15 @@ renderCUDA(
 			collected_Tu[block.thread_rank()] = {transMats[9 * coll_id+0], transMats[9 * coll_id+1], transMats[9 * coll_id+2]};
 			collected_Tv[block.thread_rank()] = {transMats[9 * coll_id+3], transMats[9 * coll_id+4], transMats[9 * coll_id+5]};
 			collected_Tw[block.thread_rank()] = {transMats[9 * coll_id+6], transMats[9 * coll_id+7], transMats[9 * coll_id+8]};
-			collected_points3d[block.thread_rank()] = points3d[coll_id];
-			collected_kappas[block.thread_rank()] = kappas[coll_id];
-			collected_quats[block.thread_rank()] = quats[coll_id];
-			for (int ii = 0; ii < 16; ii++)
-				collected_view2gaussian[16 * block.thread_rank() + ii] = view2gaussian[coll_id * 16 + ii];
-			collected_scales[block.thread_rank()] = scales[coll_id];
+			if (lambda > 0.0f){
+				collected_points3d[block.thread_rank()] = points3d[coll_id];
+				collected_kappas[block.thread_rank()] = kappas[coll_id];
+				collected_quats[block.thread_rank()] = quats[coll_id];
+				for (int ii = 0; ii < 16; ii++)
+					collected_view2gaussian[16 * block.thread_rank() + ii] = view2gaussian[coll_id * 16 + ii];
+				collected_scales[block.thread_rank()] = scales[coll_id];			
+			}
+			
 			for (int i = 0; i < C; i++)
 				collected_colors[i * BLOCK_SIZE + block.thread_rank()] = colors[coll_id * C + i];
 				// collected_depths[block.thread_rank()] = depths[coll_id];
@@ -664,11 +689,47 @@ renderCUDA(
 			float dT_dkappa = 0.0f;
 			glm::vec3 dT_dnormal3D = glm::vec3(0.,0.,0.);
 			float dT_dV2G[16]={0.,0.,0.,0.,0.,0.,0.,0.,0.,0.,0.,0.,0.,0.,0.,0.};
-			float dT_dscale[3] ={0.,0.,0.};
+			float dT_dscale[3] = {0.,0.,0.};
 			float UDF_opacity = 0;
 			if (lambda > 0.0f) {
 				UDF_opacity = 1 - computeOpacityGUDF(p_world,normal,collected_kappas[j],c_d,W,H,focal_x,focal_y,
 					collected_view2gaussian+j*16,pixf,collected_quats[j],collected_scales[j],t_tange,&dT_dkappa,dT_dV2G,dT_dnormal3D,dT_dscale);
+				// if(isnan(dT_dscale[0]) || isnan(dT_dscale[1]) || isnan(dT_dscale[2])){
+				// if(collected_id[j] == 69831 && pix_id == 54640){
+				// 	// printf("gaussian_id %d pix_id %d\n",collected_id[j], pix_id);
+				// 	printf("pix_id %d dT_dscale: %f %f %f\n",pix_id,dT_dscale[0],dT_dscale[1],dT_dscale[2]);
+				// 	printf("pixf: %f %f\n",pixf.x,pixf.y);
+				// 	printf("W H: %d %d\n",W,H);
+				// 	printf("focal_x focal_y: %f %f\n",focal_x,focal_y);
+				// 	// print viewmat
+				// 	printf("viewmat: ");
+				// 	for(int i=0;i<4;i++){
+				// 		for(int j=0;j<4;j++){
+				// 			printf("%f ",viewmat[i*4+j]);
+				// 		}
+				// 		printf("\n");
+				// 	}
+				// 	printf("V2G: ");
+				// 	float * view2gaussian = collected_view2gaussian + j * 16;
+				// 	for(int m=0;m<4;m++){
+				// 		for(int n=0;n<4;n++){
+				// 			printf("%f ",view2gaussian[m*4+n]);
+				// 		}
+				// 		printf("\n");
+				// 	}
+				// 	printf("quat: %f %f %f %f\n",collected_quats[j].x,collected_quats[j].y,collected_quats[j].z,collected_quats[j].w);	
+				// 	glm::mat3 q_rot = quat_to_rotmat(collected_quats[j]);
+				// 	for(int i=0;i<3;i++){
+				// 		for(int j=0;j<3;j++){
+				// 			printf("%f ",q_rot[i][j]);
+				// 		}
+				// 		printf("\n");
+				// 	}
+				// 	printf("scale: %f %f %f\n",collected_scales[j].x,collected_scales[j].y,collected_scales[j].z);; 
+				// 	printf("normal: %f %f %f\n",normal[0],normal[1],normal[2]);
+				// 	printf("p_world: %f %f %f\n",p_world.x,p_world.y,p_world.z);
+				// 	printf("kappa: %f\n",collected_kappas[j]);
+				// }
 			}
 			float alpha = min(0.99f, nor_o.w * (lambda * UDF_opacity + (1 - lambda) * G));
 			
@@ -750,6 +811,9 @@ renderCUDA(
 				bg_dot_dpixel += bg_color[i] * dL_dpixel[i];
 			dL_dalpha += (-T_final / (1.f - alpha)) * bg_dot_dpixel;
 			float dL_dT = -nor_o.w * lambda * dL_dalpha;
+			// if (dL_dT > 1e2){
+			// 	printf("dL_dT is too large: %f, dL_dalpha :%f\n, nor_o.w: %f lambda: %f\n", dL_dT,dL_dalpha, nor_o.w, lambda); 
+			// }
 			// compute dL_dkappa dalpha_dT = -nor_o.w
 			if (lambda > 0){
 
@@ -766,11 +830,11 @@ renderCUDA(
 				
 				atomicAdd(&dL_dscale[global_id][1], dL_dT * dT_dscale[1]);
 				atomicAdd(&dL_dscale[global_id][2], dL_dT * dT_dscale[2]);
-				// if( isnan(dL_dT * dT_dscale[0]) || isnan(dL_dT * dT_dscale[1]) || isnan(dL_dT * dT_dscale[2])){	
-				// 	printf("dT_dscale: %f %f %f\n", dT_dscale[0], dT_dscale[1], dT_dscale[2]);
-				// 	printf("dL_dT: %f\n", dL_dT);
-				// 	printf("dL_dscale: %f %f %f\n", dL_dscale[global_id][0], dL_dscale[global_id][1], dL_dscale[global_id][2]);
-				// 	printf("nor_o.w dL_dalpha: %f %f\n", nor_o.w, dL_dalpha);
+				// if( (isnan(dL_dscale[global_id][0]) || isnan(dL_dscale[global_id][1]) || isnan(dL_dscale[global_id][2]) || isinf(dL_dscale[global_id][1]) || isinf(dL_dscale[global_id][2]) || isinf(dL_dscale[global_id][0])) ){ 
+				// 	// printf("\n", );
+				// 	printf("dT_dscale: %f %f %f dL_dT: %f alpha :%f udf_o :%f \n",dT_dscale[0], dT_dscale[1], dT_dscale[2], dL_dT,alpha,UDF_opacity);
+				// 	// printf("dL_dscale: %f %f %f\n", dL_dscale[global_id][0], dL_dscale[global_id][1], dL_dscale[global_id][2]);
+				// // 	printf("nor_o.w dL_dalpha: %f %f\n", nor_o.w, dL_dalpha);
 				// }
 			}
 			// Update gradients w.r.t. opacity of the Gaussian
@@ -977,6 +1041,7 @@ __global__ void preprocessCUDA(
 	glm::vec2 dL_dscale;
 	glm::vec4 dL_drot;
 	glm::vec2 scale2 = glm::vec2(scales[idx].x, scales[idx].y);
+	// if (isnan(dL_dscales[idx][0]) || isnan(dL_dscales[idx][1]) || isinf(dL_dscales[idx][0]) || isinf(dL_dscales[idx][1])) printf("id: %d \n",idx);
 	computeTransMat(
 		p_world,
 		rotations[idx],

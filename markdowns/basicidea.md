@@ -240,8 +240,8 @@ $$
 Assuming the basis functions are polynomials of degree $n$:
 $$
 \begin{align}
-B_x(x) &= \sum_{i=0}^{n}a_0^ix^i,\; B_y(y) = \sum_{i=0}^{n}a_1^iy^i,\; B_z(z) = \sum_{i=0}^{n}a_2^iz^i  \\
-f(x,y,z) &= 
+&B_x(x) = \sum_{i=0}^{n}a_0^ix^i,\; B_y(y) = \sum_{i=0}^{n}a_1^iy^i,\; B_z(z) = \sum_{i=0}^{n}a_2^iz^i  \\
+&h = f(t), \; \frac{\partial h}{\partial t} = 
 \end{align}
 $$
 
