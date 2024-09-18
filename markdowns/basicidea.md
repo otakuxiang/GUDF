@@ -75,51 +75,57 @@ $$
 又有sigmoid函数的不定积分为$\int\Phi_\kappa(x)dx = \frac{1}{\kappa}\ln(1+e^{\kappa x})$ = Y(x),则有:
 $$
 \begin{align}
-    T &= A\exp(-\kappa(Y(f(r(t_f))) - Y(f(r(t_n))))) &\\
+    T(t_f) &= A\exp(-\kappa(Y(f(r(t_f))) - Y(f(r(t_n))))) &\\
     &= A\exp(\ln(1+e^{\kappa f(r(t_n))}) - \ln(1+e^{\kappa f(r(t_f))})) &\\
     &= \frac{A(1+e^{\kappa f(r(t_n))})}{1+e^{\kappa f(r(t_f))}} &\\
-    T(t) &= \frac{A(1+e^{\kappa f(r(t_n))})}{1+e^{\kappa f(r(t))}} &\\
+    T(t) &= \frac{\exp(-\kappa|\cos(\theta)|(t - t_n))(1+e^{\kappa f(r(t_n))})}{1+e^{\kappa f(r(t))}} &\\
+    T(t) &=  (1 + \exp(\kappa|\cos\theta|(t^* - t_n)))\frac{\exp(-\kappa|\cos(\theta)|(t - t_n))}{1+\exp(\kappa|\cos\theta|(t^* - t))} &\\
+    T(t) &=  (1 + \exp(\kappa|\cos\theta|(t^* - t_n)))\frac{\exp(\kappa|\cos(\theta)|(t_n - t^* + t^* - t))}{1+\exp(\kappa|\cos\theta|(t^* - t))} &\\
+    T(t) &=  (1 + \exp(\kappa|\cos\theta|(t^* - t_n)))\exp(\kappa|\cos(\theta)|(t_n - t^*))\frac{\exp(\kappa|\cos(\theta)|(t^* - t))}{1+\exp(\kappa\cos\theta|(t^* - t))} &\\
+    T(t) &= \frac{1 + \exp(\kappa|\cos\theta|(t_n-t^*))}{1+\exp(\kappa|\cos\theta|(t- t^*))} &\\    
     w(t) &= σ(t)T(t) = -T'(t) &\\
     \int_{t_n}^{t_f}w(t)dt &= -\int_{t_n}^{t_f}T'(t)dt &\\
-    &= T(t_n) - T(t_f) &\\
-    depth &= \int_{t_n}^{t_f} w(t)tdt= -\int_{t_n}^{t_f} T'(t)tdt =  - (T(t)t)|^{t_f}_{t_n} + \int_{t_n}^{t_f} T(t)dt &\\
-    \int_{t_n}^{t_f} T(t)dt &= (1+e^{\kappa f(r(t_n))})\int_{t_n}^{t_f}\frac{\exp(-\kappa|\cos(\theta)|(t - t_n))}{1+\exp(-\kappa |\cos\theta|(t^* - t))}dt  &\\
-    &= (1+e^{\kappa f(r(t_n))})e^{\kappa f(r(t_n))}\int_{t_n}^{t_f}\frac{\exp({\kappa|\cos\theta|(t^* - t)})}{1+\exp({-\kappa|\cos\theta|(t^* - t)})}dt &\\ 
-    &=(1+e^{\kappa f(r(t_n))})e^{\kappa f(r(t_n))}\int_{t_n}^{t_f}\frac{1}{-\kappa|\cos\theta|}\frac{\exp({\kappa|\cos\theta|(t^* - t)})}{1+\exp({-\kappa|\cos\theta|(t^* - t)})}d(\kappa|\cos\theta|(t^* - t))
+    &= T(t_n) - T(t_f) = 1 - T(t_f)&\\
+    d &= \int_{t_n}^{t_f} w(t)tdt= -\int_{t_n}^{t_f} T'(t)tdt =  - (T(t)t)|^{t_f}_{t_n} + \int_{t_n}^{t_f} T(t)dt &\\
+    \int_{t_n}^{t_f} T(t)dt &= (1 + \exp(\kappa|\cos\theta|(t_n-t^*)))\int_{t_n}^{t_f}\frac{1}{1+\exp(\kappa|\cos\theta|(t - t^*))}dt  &\\
+    &= \frac{1 + \exp(\kappa|\cos\theta|(t_n-t^*))}{\kappa|\cos\theta|}\int_{t_n}^{t_f}\frac{1}{1+\exp(\kappa|\cos\theta|(t - t^*))}d(\kappa|\cos\theta|(t - t^*)) &\\
+    &= \frac{1 + \exp(\kappa|\cos\theta|(t_n-t^*))}{\kappa|\cos\theta|}(\kappa|\cos\theta|(t_f - t_n) + \ln(1 + e^{-\kappa f(r(t_n))})-\ln(1 + e^{-\kappa f(r(t_f))}))&\\
+    d &=  - T(t_f)t_f + t_n +  \frac{1 + \exp(\kappa|\cos\theta|(t_n-t^*))}{\kappa|\cos\theta|}(\kappa|\cos\theta|(t_f - t_n) + \ln(\frac{1 + e^{-\kappa f(r(t_n))}}{1 + e^{-\kappa f(r(t_f))}}))&\\
 \end{align}
 $$
-Note that $\int e^x / (1+e^{-x})dx = e^x - \log(e^x + 1)$, then:
-$$
-\begin{align}
-\int_{t_n}^{t_f} T(t)dt &= \frac{(1+e^{\kappa f(r(t_n))})e^{\kappa f(r(t_n))}}{-\kappa|\cos\theta|}(e^{\kappa f(r(t_f))}-e^{\kappa f(r(t_n))}+\log(e^{\kappa f(r(t_n))}+1)-\log(e^{\kappa f(r(t_f))}+1)) \\
-\end{align}
-$$
-let $B=(1+e^{\kappa f(r(t_f))}),C=(1+e^{\kappa f(r(t_n))})$ The backpropagation of the transmittance is:
-$$
-\begin{align}
-&\frac{\partial T}{\partial \kappa} = \frac{C}{B}\frac{\partial A}{\partial \kappa} - \frac{AC}{B^2}\frac{\partial B}{\partial \kappa} + \frac{A}{B}\frac{\partial C}{\partial \kappa} \\
-&\frac{\partial A}{\partial \kappa} = -\cos(\theta)(t_f - t_n)A \\
-&\frac{\partial B}{\partial \kappa} = \exp(\kappa f(r(t_f)))f(r(t_f)) \\
-&\frac{\partial C}{\partial \kappa} = \exp(\kappa f(r(t_n)))f(r(t_n)) \\
-\end{align}
-$$
-and:
-$$
-\begin{align}
-&\frac{\partial T}{\partial t^*} = (\frac{A}{B}\frac{\partial C}{\partial t^*} - \frac{AC}{B^2} \frac{\partial B}{\partial 
-t^*}) \\
-&\frac{\partial C}{\partial t^*} = \frac{\partial C}{\partial f}\frac{\partial f}{\partial  t^*}  \\
-&\frac{\partial B}{\partial t^*} = \frac{\partial B}{\partial f}\frac{\partial f}{\partial t^*} \\
-&\frac{\partial T}{\partial t_n} = \frac{C}{B}\frac{\partial A}{t_n} -\frac{AC}{B^2}\frac{\partial B}{\partial t_n} + \frac{A}{B}\frac{\partial C}{\partial t_n} \\
-&\frac{\partial T}{\partial t_f} = \frac{C}{B}\frac{\partial A}{t_f} -\frac{AC}{B^2}\frac{\partial B}{\partial t_f} + \frac{A}{B}\frac{\partial C}{\partial t_f} \\
+Note that $1 + \exp(\kappa|\cos\theta|(t_n-t^*))$ may be very large, we use the Taylor expansion to approximate latter item to make sure there exists an small item in the denominator.
 
-&\frac{\partial A}{\partial t_n} = \kappa|\cos(\theta)|A, \;
-\frac{\partial A}{\partial t_f} = -\kappa|\cos(\theta)|A \\
-&\frac{\partial B}{\partial t_n} = 0,\; \frac{\partial B}{\partial t_f} = -\kappa|\cos(\theta)|\exp(\kappa f(r(t_f))) \\
-&\frac{\partial C}{\partial t_f} = 0,\; \frac{\partial C}{\partial t_n} = -\kappa|\cos(\theta)|\exp(\kappa f(r(t_n))) \\
-
+consider the integration:
+$$
+\begin{align}
+    \int \frac{1}{1+\exp(\kappa|\cos\theta|(t - t^*))}dt &= \int \frac{1}{1+\exp(\kappa|\cos\theta|(t-t^*))} \frac{1}{\exp(\kappa|\cos\theta|(t-t^*))}de^{\kappa|\cos\theta|(t-t^*)} &\\
+    &=\frac{1}{\kappa|\cos\theta|}\ln\frac{\exp(\kappa|\cos\theta|(t-t^*))}{1+\exp(\kappa|\cos\theta|(t-t^*))} & \\
 \end{align}
 $$
+let $x = \exp(\kappa|\cos\theta|(t-t^*))$, notice that when $\kappa|\cos\theta|(t-t^*)$ very large, $x >>> 1$, so we do taylor expasion to approximate it:
+$$
+\begin{align}
+    \ln\frac{x}{1 + x} &= \ln(1 - \frac{1}{1+x}) \\
+    &= -\frac{1}{1+x} + O(\frac{1}{(1+x)^2})
+\end{align}
+$$
+when $x$ larger than $10^8$ the taylor expasion is accurate enough, because the rest item smaller than $10^{-16}$. So we have:
+$$
+\begin{align}
+    \int_{t_n}^{t_f} T(t)dt &= \frac{1 + \exp(\kappa|\cos\theta|(t_n-t^*))}{\kappa|\cos\theta|}(-\frac{1}{1+\exp(\kappa|\cos\theta|(t_f-t^*))} + \frac{1}{1+\exp(\kappa|\cos\theta|(t_n-t^*))})&\\
+    &= \frac{1}{\kappa|\cos\theta|}(1 - \frac{1 + \exp(\kappa|\cos\theta|(t_n-t^*))}{1+\exp(\kappa|\cos\theta|(t_f-t^*))}) = \frac{1-T(t_f)}{\kappa|\cos\theta|}&\\
+\end{align}
+$$
+Finally, we have the expected depth:
+$$
+\begin{equation}
+d = \begin{cases}
+            -T(t_f)t_f + t_n +  \frac{1 + \exp(\kappa|\cos\theta|(t_n-t^*))}{\kappa|\cos\theta|}(\kappa|\cos\theta|(t_f - t_n) + \ln(\frac{1 + e^{-\kappa f(r(t_n))}}{1 + e^{-\kappa f(r(t_f))}})), &e^{-\kappa f(r(t_n))} < 10^8 \\
+            -T(t_f)t_f + t_n + (1-T(t_f)) / ({\kappa|\cos\theta|}), &e^{-\kappa f(r(t_n))} \geq 10^8 \\
+    \end{cases}
+\end{equation}
+$$
+we put the backpropgation in backpropgation.md:
 in order to change the center of the 2d gaussian, the $\partial t^*/\partial x$ should be computed. Suppose the center and the normal of the 2d gaussian are $x$ and $n$, the origin of camera is $o$ and the view direction is $v$, then the intersection depth $t^*$ can be computed by:
 $$
 \begin{align}
