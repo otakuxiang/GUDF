@@ -34,6 +34,7 @@ namespace BACKWARD
 		const float* kappas,
 		const float* viewmatrix,
 		const float4* normal_opacity,
+		const float* max_alpha,
 		const float* transMats,
 		const float* view2gaussians,
 		const float* colors,
@@ -63,7 +64,6 @@ namespace BACKWARD
 		const float scale_modifier,
 		const float* transMats,
 		const float* view2gaussian, 
-
 		const float* view,
 		const float* proj,
 		const float focal_x, const float focal_y,

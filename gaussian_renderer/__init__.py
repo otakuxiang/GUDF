@@ -92,6 +92,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     except:
         pass
 
+    # breakpoint()
     rendered_image, radii, allmap = rasterizer(
         means3D = means3D,
         means2D = means2D,
@@ -110,6 +111,9 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             "visibility_filter" : radii > 0,
             "radii": radii,
     }
+    if lamda == 1:
+        rets['viewspace_points'] = means3D
+        
 
 
     # additional regularizations
@@ -127,7 +131,11 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     render_depth_expected = allmap[0:1]
     render_depth_expected = (render_depth_expected / render_alpha)
     render_depth_expected = torch.nan_to_num(render_depth_expected, 0, 0)
-    
+    if lamda == 1:
+        # if use gudf renderer,  render_depth_expected are the distance to the camera center.
+        rays_d = viewpoint_camera.get_rays()
+        # breakpoint()
+        render_depth_expected = render_depth_expected / rays_d.norm(dim=-1, keepdim=True).permute(2,0,1)
     # get depth distortion map
     render_dist = allmap[6:7]
 
@@ -153,3 +161,81 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     })
 
     return rets
+
+def simple_render(viewpoint_camera, 
+                  xyz, 
+                  colors,
+                  scales,
+                  quats,
+                  opacities,
+                  kappas,
+                  lamda = 1.):
+    screenspace_points = torch.zeros_like(xyz, dtype=xyz.dtype, requires_grad=True, device="cuda") + 0
+    tanfovx = math.tan(viewpoint_camera.FoVx * 0.5)
+    tanfovy = math.tan(viewpoint_camera.FoVy * 0.5)
+    bg_color = [0, 0, 0]
+    background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
+    raster_settings = GaussianRasterizationSettings(
+        image_height=int(viewpoint_camera.image_height),
+        image_width=int(viewpoint_camera.image_width),
+        tanfovx=tanfovx,
+        tanfovy=tanfovy,
+        bg=background,
+        scale_modifier=1.,
+        viewmatrix=viewpoint_camera.world_view_transform,
+        projmatrix=viewpoint_camera.full_proj_transform,
+        sh_degree=0,
+        campos=viewpoint_camera.camera_center,
+        lamda=lamda,
+        prefiltered=False,
+        debug=False,
+        # pipe.debug
+    )
+    rasterizer = GaussianRasterizer(raster_settings=raster_settings)
+
+    means3D = xyz
+    opacity = opacities
+    means2D = screenspace_points
+    
+
+    # If precomputed 3d covariance is provided, use it. If not, then it will be computed from
+    # scaling / rotation by the rasterizer.
+    cov3D_precomp = None
+    scales = scales
+    rotations = quats
+    shs = None
+    colors_precomp = colors
+    rendered_image, radii, allmap = rasterizer(
+        means3D = means3D,
+        means2D = means2D,
+        shs = shs,
+        colors_precomp = colors_precomp,
+        opacities = opacity,
+        scales = scales,
+        rotations = rotations,
+        kappas = kappas,
+        cov3D_precomp = cov3D_precomp
+    )
+    render_alpha = allmap[1:2]
+
+    # get normal map
+    render_normal = allmap[2:5]
+    render_normal = (render_normal.permute(1,2,0) @ (viewpoint_camera.world_view_transform[:3,:3].T)).permute(2,0,1)
+    
+    # get median depth map
+    render_depth_median = allmap[5:6]
+    render_depth_median = torch.nan_to_num(render_depth_median, 0, 0)
+    render_depth_expected = allmap[0:1]
+    render_depth_expected = (render_depth_expected / render_alpha)
+    render_depth_expected = torch.nan_to_num(render_depth_expected, 0, 0)
+    if lamda == 1:
+        # if use gudf renderer,  render_depth_expected are the distance to the camera center.
+        rays_d = viewpoint_camera.get_rays()
+        # breakpoint()
+        render_depth_expected = render_depth_expected / rays_d.norm(dim=-1, keepdim=True).permute(2,0,1)
+    surf_normal = depth_to_normal(viewpoint_camera, render_depth_expected)
+    surf_normal = surf_normal.permute(2,0,1)
+    # remember to multiply with accum_alpha since render_normal is unnormalized.
+    surf_normal = surf_normal * (render_alpha).detach()
+    
+    return rendered_image, render_depth_expected, render_normal, surf_normal

@@ -27,10 +27,11 @@ __device__ float computeOpacityGUDF(const glm::vec3 &p_world, const float *norma
  	const glm::vec3 &scale, float* int_depth, float* dT_dkappa, float *dT_dV2G,glm::vec3 &dT_dnormal3D,
 	float *dT_dscale, float *dD_dkappa, float *dD_dV2G, glm::vec3 &dD_dnormal3D, float *dD_dscale
 ){ 
+	if (scale[2] < 1e-6) return 1.0f;
 	const glm::vec<3,double,glm::packed_highp> scaled(scale[0],scale[1],scale[2]);
 	const glm::vec3 cam_pos = glm::vec3(view2gaussian[12], view2gaussian[13], view2gaussian[14]);
-	glm::vec3 ray_view = glm::normalize(glm::vec3((pixf.x - W / 2.0f) / focal_x,
-		(pixf.y - H / 2.0f) / focal_y, 1));		
+	glm::vec3 ray_view = glm::normalize(glm::vec3((pixf.x + 0.5 - W / 2.0f) / focal_x,
+		(pixf.y + 0.5 - H / 2.0f) / focal_y, 1));		
 	glm::mat3 R = glm::mat3(view2gaussian[0], view2gaussian[1], view2gaussian[2],
 		view2gaussian[4], view2gaussian[5], view2gaussian[6],
 		view2gaussian[8], view2gaussian[9], view2gaussian[10]);
@@ -39,7 +40,7 @@ __device__ float computeOpacityGUDF(const glm::vec3 &p_world, const float *norma
 	glm::vec3 ray_gauss = R * ray_view;
 	float cos_theta = glm::dot(ray_gauss, normal_g);
     glm::vec3 dcosdn = ray_gauss;
-	glm::vec3 dcosdr = normal_g - glm::dot(ray_gauss,normal_g) * ray_gauss;
+	glm::vec3 dcosdr = normal_g;
 	if(cos_theta < 0){
 		cos_theta = -cos_theta; 
 		dcosdn = -dcosdn;
@@ -55,18 +56,32 @@ __device__ float computeOpacityGUDF(const glm::vec3 &p_world, const float *norma
 	glm::vec3 ray_d_scaled = glm::vec3(ray_gauss[0] / 3 / scaled[0],ray_gauss[1] / 3 / scaled[1],ray_gauss[2] / 3 / scaled[2]);
 	// compute the ray-ellipse intersection in the 2D plane
 
-	float A = glm::dot(ray_d_scaled, ray_d_scaled); 
-	float B = 2 * glm::dot(ray_o_scaled, ray_d_scaled);
-	float C = glm::dot(ray_o_scaled, ray_o_scaled) - 1;
-	float delta = B*B - 4*A*C;
+	double A = glm::dot(ray_d_scaled, ray_d_scaled); 
+	double B = 2 * glm::dot(ray_o_scaled, ray_d_scaled);
+	double C = glm::dot(ray_o_scaled, ray_o_scaled) - 1;
+	double delta = B*B - 4*A*C;
 	if (delta < 0) {
 		// ray does not intersect the ellipse
 		return 1.0f;
 	}
-	float sd = sqrt(delta);
+	double sd = sqrt(delta);
 	float tn = (-B - sd) / (2*A);
 	float tf = (-B + sd) / (2*A);
 	float depth_o = glm::dot(-cam_pos,normal_g) / glm::dot(ray_gauss,normal_g);
+
+	// if (tn > depth_o || tf < depth_o){
+	// 	return 1.0f;
+ 	// }
+	// float mid_d = (tf - tn) / 2.0f;
+	// float mid_d = sqrt(expf(2*(logf(-B)-logf(A))) - 4 * expf(logf(C) - logf(A))) / 2;
+
+
+	
+
+	// tn = depth_o - mid_d;
+	// tf = depth_o + mid_d;
+	// int_depth[0] = depth_o;
+
 	float flagtf = depth_o < tf ? -1 : 1, flagtn = depth_o > tn ? 1 : -1;
 	glm::vec3 p_tn = ray_o_scaled + ray_d_scaled * tn;
 	glm::vec3 p_tf = ray_o_scaled + ray_d_scaled * tf;
@@ -87,7 +102,7 @@ __device__ float computeOpacityGUDF(const glm::vec3 &p_world, const float *norma
 	float lndTdB = lnC - 2 * lnB, lndTdC = - lnB;
 	float T_1 = expf(lnT) - 1,int_T;
 	//compute int_T
-	if (lnB > 19){
+	if (lnC > 19){
 		int_T = -T_1 / kappacos;
 	}
 	else{
@@ -127,6 +142,15 @@ __device__ float computeOpacityGUDF(const glm::vec3 &p_world, const float *norma
 	// float dTdtf = - dT_dA * kappacos * A - dT_dB * kappacos * E;
 	float dTdtn = expf(lndTdC + lnkc + lnF);
 	float dTdtf = - expf(lndTdB + lnkc + lnE);
+	// float dTdtn = - dTdtf1 / 2 + dTdtn1 / 2;
+	// float dTdtf = dTdtf1 / 2 - dTdtn1 / 2;
+	// dT_ddepth += dTdtn1 + dTdtf1;
+	// float dT_ddepth = 0.0f;
+	// float T = expf(-kappa * cos_theta * mid_d);
+	// dT_dkappa[0] = -cos_theta * mid_d * T;
+	// float dTdcos = - kappa * mid_d * T; 
+	// float dTdtn = 1 / 2 * kappacos * T;
+	// float dTdtf = - 1 / 2 * kappacos * T;
 
 	// dAdcos = (tn - tf) * A * kappa, dBdcos = E * kappa * (depth - tf), dCdcos = F * kappa * (depth - tn)
 	// float dAdcos = (tn - tf) * A * kappa;
@@ -136,25 +160,29 @@ __device__ float computeOpacityGUDF(const glm::vec3 &p_world, const float *norma
 	float dTdcos = flagtf * expf(lndTdB + lntfd + lnkappa + lnE) - flagtn * expf(lndTdC + lntnd + lnkappa + lnF); 
 	
 	// backprop int_depth
-	float dDdtf = -dTdtf * tf,dDdtn = -dTdtn * tf, dEdkappa,dEddepth,dEdcos;
-	if(lnB > 19){
+	float dEdtn,dEdkappa,dEddepth,dEdcos;
+	
+	if(lnC > 19){
+		dEdtn = - 1 / kappacos * dTdtn;
 		dEdkappa = (T_1 / kappa - dT_dkappa[0]) / kappacos;
 		dEddepth = -dT_ddepth / kappacos;
 		dEdcos = (T_1 / cos_theta - dTdcos) / kappacos;
 	}
 	else{
 		float G = kappacos * (tf - tn),C = expf(lnC),B = expf(lnB),F = C / kappacos;
-		float dCdkappa = -flagtn * expf(lnF + lncos + lntnd),dBdkappa = -flagtf * expf(lnE + lncos + lntfd);
+		dEdtn = (G + lnT) * expf(lnF) - 1;
+		float dCdkappa = -ftn * expf(lnF),dBdkappa = -ftf * expf(lnE);
 		float dHdkappa = dCdkappa / C - dBdkappa / B;
 		float dFdkappa = dCdkappa / kappacos - expf(lnC - lnkc - lnkappa);
-		dEdkappa = (G + H) * dFdkappa + F * (dHdkappa + cos_theta * (tf - tn));
+		dEdkappa = (G + lnT) * dFdkappa + F * (dHdkappa + cos_theta * (tf - tn));
 		float dHddepth = -expf(lnkc + lnF) / C + expf(lnkc + lnE) / B;
-		dEddepth = - (G + H) * expf(lnE) + F * dHddepth;
+		dEddepth = -(G + lnT) * expf(lnF) + F * dHddepth;
 		float dCdcos = -flagtn * expf(lntnd + lnkappa + lnF);
 		float dHdcos = dCdcos / C + flagtf * expf(lntfd + lnkappa + lnE) / B;
 		float dFdcos = dCdcos / kappacos - expf(lnC - lnkc - lncos);
-		dEdcos = (G + H) * dFdcos + F * (dHdcos + kappa * (tf - tn));
+		dEdcos = (G + lnT) * dFdcos + F * (dHdcos + kappa * (tf - tn));
 	}
+	float dDdtf = -dTdtf * tf, dDdtn = -tf * dTdtn + dEdtn + 1;
 	dD_dkappa[0] = dEdkappa - tf * dT_dkappa[0];
 	float dDddepth = dEddepth - tf * dT_ddepth, dDdcos = dEdcos - tf * dTdcos;
 	
@@ -229,43 +257,12 @@ __device__ float computeOpacityGUDF(const glm::vec3 &p_world, const float *norma
 	dT_dscale[0] = dTdrg[0] * drg_dscale[0] + dTdog[0] * dog_dscale[0];
 	dT_dscale[1] = dTdrg[1] * drg_dscale[1] + dTdog[1] * dog_dscale[1];
 	dT_dscale[2] = dTdrg[2] * drg_dscale[2] + dTdog[2] * dog_dscale[2];
-
+	
 	dD_dscale[0] = dDdrg[0] * drg_dscale[0] + dDdog[0] * dog_dscale[0];
 	dD_dscale[1] = dDdrg[1] * drg_dscale[1] + dDdog[1] * dog_dscale[1];
 	dD_dscale[2] = dDdrg[2] * drg_dscale[2] + dDdog[2] * dog_dscale[2];
-
-	// check if dT_dscale is too large
-	// if(isnan(dT_dscale[0]) || isinf(dT_dscale[0]) || isnan(dT_dscale[1]) || isinf(dT_dscale[1]) || isnan(dT_dscale[2]) || isinf(dT_dscale[2])){
-	// 	printf("dTdcos %f\n", dTdcos);
-	// 	printf("pixf: %f %f\n",pixf.x,pixf.y);
-	// 	printf("W H: %d %d\n",W,H);
-	// 	printf("focal_x focal_y: %f %f\n",focal_x,focal_y);
-	// 	// print viewmat
-	// 	printf("V2G: ");
-	// 	for(int i=0;i<4;i++){
-	// 		for(int j=0;j<4;j++){
-	// 			printf("%f ",view2gaussian[i*4+j]);
-	// 		}
-	// 		printf("\n");
-	// 	}
-	// 	// printf("quat: %f %f %f %f\n",collected_quats[j].x,collected_quats[j].y,collected_quats[j].z,collected_quats[j].w);	
-	// 	printf("q_rot:\n");
-	// 	glm::mat3 q_rot = quat_to_rotmat(quat);
-	// 	for(int i=0;i<3;i++){
-	// 		for(int j=0;j<3;j++){
-	// 			printf("%f ",q_rot[i][j]);
-	// 		}
-	// 		printf("\n");
-	// 	}
-	// 	printf("scale: %f %f %f\n",scale.x,scale.y,scale.z); 
-	// 	printf("normal: %f %f %f\n",normal[0],normal[1],normal[2]);
-	// 	printf("p_world: %f %f %f\n",p_world.x,p_world.y,p_world.z);
-	// 	printf("kappa: %f\n",kappa);
-	// }
-
-	return expf(lnC - lnB);
+	return expf(lnT);
 }
-
 
 // Backward pass for conversion of spherical harmonics to RGB for
 // each Gaussian.
@@ -404,18 +401,14 @@ __device__ void computeView2Gaussian_backward(
 	// Recompute (intermediate) results for the 3D covariance computation.
 	// glm matrices use column-major order
 	// Normalize quaternion to get valid rotation
-	glm::vec4 q = rot;// / glm::length(rot);
-	float r = q.x;
-	float x = q.y;
-	float y = q.z;
-	float z = q.w;
+	// glm::vec4 q = rot;// / glm::length(rot);
+	// float r = q.x;
+	// float x = q.y;
+	// float y = q.z;
+	// float z = q.w;
 
 	// Compute rotation matrix from quaternion
-	glm::mat3 R = glm::mat3(
-		1.f - 2.f * (y * y + z * z), 2.f * (x * y - r * z), 2.f * (x * z + r * y),
-		2.f * (x * y + r * z), 1.f - 2.f * (x * x + z * z), 2.f * (y * z - r * x),
-		2.f * (x * z - r * y), 2.f * (y * z + r * x), 1.f - 2.f * (x * x + y * y)
-	);
+	glm::mat3 R = quat_to_rotmat(rot);
 
 	// transform 3D points in gaussian coordinate system to world coordinate system as follows
 	// new_xyz = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1) + self.get_xyz[selected_pts_mask].repeat(N, 1)
@@ -423,9 +416,9 @@ __device__ void computeView2Gaussian_backward(
 
 	// Gaussian to world transform
 	glm::mat4 G2W = glm::mat4(
-		R[0][0], R[1][0], R[2][0], 0.0f,
-		R[0][1], R[1][1], R[2][1], 0.0f,
-		R[0][2], R[1][2], R[2][2], 0.0f,
+		R[0][0], R[0][1], R[0][2], 0.0f,
+		R[1][0], R[1][1], R[1][2], 0.0f,
+		R[2][0], R[2][1], R[2][2], 0.0f,
 		mean.x, mean.y, mean.z, 1.0f
 	);
 
@@ -520,11 +513,11 @@ __device__ void computeView2Gaussian_backward(
 	glm::mat3 dL_dMt = dL_dR;
 
 	// // Gradients of loss w.r.t. normalized quaternion
-	glm::vec4 dL_dq;
-	dL_dq.x = 2 * z * (dL_dMt[0][1] - dL_dMt[1][0]) + 2 * y * (dL_dMt[2][0] - dL_dMt[0][2]) + 2 * x * (dL_dMt[1][2] - dL_dMt[2][1]);
-	dL_dq.y = 2 * y * (dL_dMt[1][0] + dL_dMt[0][1]) + 2 * z * (dL_dMt[2][0] + dL_dMt[0][2]) + 2 * r * (dL_dMt[1][2] - dL_dMt[2][1]) - 4 * x * (dL_dMt[2][2] + dL_dMt[1][1]);
-	dL_dq.z = 2 * x * (dL_dMt[1][0] + dL_dMt[0][1]) + 2 * r * (dL_dMt[2][0] - dL_dMt[0][2]) + 2 * z * (dL_dMt[1][2] + dL_dMt[2][1]) - 4 * y * (dL_dMt[2][2] + dL_dMt[0][0]);
-	dL_dq.w = 2 * r * (dL_dMt[0][1] - dL_dMt[1][0]) + 2 * x * (dL_dMt[2][0] + dL_dMt[0][2]) + 2 * y * (dL_dMt[1][2] + dL_dMt[2][1]) - 4 * z * (dL_dMt[1][1] + dL_dMt[0][0]);
+	glm::vec4 dL_dq = quat_to_rotmat_vjp(rot,dL_dMt);;
+	// dL_dq.x = 2 * z * (dL_dMt[0][1] - dL_dMt[1][0]) + 2 * y * (dL_dMt[2][0] - dL_dMt[0][2]) + 2 * x * (dL_dMt[1][2] - dL_dMt[2][1]);
+	// dL_dq.y = 2 * y * (dL_dMt[1][0] + dL_dMt[0][1]) + 2 * z * (dL_dMt[2][0] + dL_dMt[0][2]) + 2 * r * (dL_dMt[1][2] - dL_dMt[2][1]) - 4 * x * (dL_dMt[2][2] + dL_dMt[1][1]);
+	// dL_dq.z = 2 * x * (dL_dMt[1][0] + dL_dMt[0][1]) + 2 * r * (dL_dMt[2][0] - dL_dMt[0][2]) + 2 * z * (dL_dMt[1][2] + dL_dMt[2][1]) - 4 * y * (dL_dMt[2][2] + dL_dMt[0][0]);
+	// dL_dq.w = 2 * r * (dL_dMt[0][1] - dL_dMt[1][0]) + 2 * x * (dL_dMt[2][0] + dL_dMt[0][2]) + 2 * y * (dL_dMt[1][2] + dL_dMt[2][1]) - 4 * z * (dL_dMt[1][1] + dL_dMt[0][0]);
 
 	// Gradients of loss w.r.t. unnormalized quaternion
 	float4* dL_drot = (float4*)(dL_drots + idx);
@@ -567,7 +560,7 @@ renderCUDA_2DGS(
 	const uint2 pix_max = { min(pix_min.x + BLOCK_X, W), min(pix_min.y + BLOCK_Y , H) };
 	const uint2 pix = { pix_min.x + block.thread_index().x, pix_min.y + block.thread_index().y };
 	const uint32_t pix_id = W * pix.y + pix.x;
-	const float2 pixf = { (float)pix.x + 0.5, (float)pix.y + 0.5};
+	const float2 pixf = { (float)pix.x , (float)pix.y };
 
 	const bool inside = pix.x < W&& pix.y < H;
 	const uint2 range = ranges[block.group_index().y * horizontal_blocks + block.group_index().x];
@@ -584,7 +577,6 @@ renderCUDA_2DGS(
 	__shared__ float3 collected_Tu[BLOCK_SIZE];
 	__shared__ float3 collected_Tv[BLOCK_SIZE];
 	__shared__ float3 collected_Tw[BLOCK_SIZE];
-	// __shared__ float collected_depths[BLOCK_SIZE];
 
 	// In the forward, we stored the final value for T, the
 	// product of all (1 - alpha) factors. 
@@ -616,7 +608,7 @@ renderCUDA_2DGS(
 			dL_dnormal2D[i] = dL_depths[(NORMAL_OFFSET + i) * H * W + pix_id];
 
 		dL_dmedian_depth = dL_depths[MIDDEPTH_OFFSET * H * W + pix_id];
-		dL_dmax_dweight = dL_depths[MEDIAN_WEIGHT_OFFSET * H * W + pix_id];
+		// dL_dmax_dweight = dL_depths[MEDIAN_WEIGHT_OFFSET * H * W + pix_id];
 	}
 
 	// for compute gradient with respect to depth and normal
@@ -677,14 +669,14 @@ renderCUDA_2DGS(
 				continue;
 
 			// compute ray-splat intersection as before
-			float3 Tu = collected_Tu[j];
-			float3 Tv = collected_Tv[j];
-			float3 Tw = collected_Tw[j];
+			const float2 xy = collected_xy[j];
+			const float3 Tu = collected_Tu[j];
+			const float3 Tv = collected_Tv[j];
+			const float3 Tw = collected_Tw[j];
 			// compute two planes intersection as the ray intersection
-			float3 k = {-Tu.x + pixf.x * Tw.x, -Tu.y + pixf.x * Tw.y, -Tu.z + pixf.x * Tw.z};
-			float3 l = {-Tv.x + pixf.y * Tw.x, -Tv.y + pixf.y * Tw.y, -Tv.z + pixf.y * Tw.z};
-			// cross product of two planes is a line (i.e., homogeneous point), See Eq. (10)
-			float3 p = crossProduct(k, l);
+			float3 k = pix.x * Tw - Tu;
+			float3 l = pix.y * Tw - Tv;
+			float3 p = cross(k, l);
 #if BACKFACE_CULL
 			// May hanle this by replacing a low pass filter,
 			// but this case is extremely rare.
@@ -697,14 +689,13 @@ renderCUDA_2DGS(
 			
 			// Add low pass filter according to Botsch et al. [2005],
 			// see Eq. (11) from 2DGS paper. 
-			float2 xy = collected_xy[j];
 			// 2d screen distance
 			float2 d = {xy.x - pixf.x, xy.y - pixf.y};
 			float rho2d = FilterInvSquare * (d.x * d.x + d.y * d.y); // screen distance
 			float rho = min(rho3d, rho2d);
 			
 			// Compute accurate depth when necessary
-			float c_d = (rho3d <= rho2d) ? (s.x * Tw.x + s.y * Tw.y) + Tw.z : Tw.z;
+			float c_d = (s.x * Tw.x + s.y * Tw.y) + Tw.z;
 			if (c_d < NEAR_PLANE) continue;
 
 			float4 nor_o = collected_normal_opacity[j];
@@ -745,11 +736,11 @@ renderCUDA_2DGS(
 			float dL_dz = 0.0f;
 			float dL_dweight = 0;
 #if RENDER_AXUTILITY
-			float m_d = (FAR_PLANE * c_d - FAR_PLANE * NEAR_PLANE) / ((FAR_PLANE - NEAR_PLANE) * c_d);
+			float m_d =  FAR_PLANE / (FAR_PLANE - NEAR_PLANE) * (1 - NEAR_PLANE / c_d);  
 			float dmd_dd = (FAR_PLANE * NEAR_PLANE) / ((FAR_PLANE - NEAR_PLANE) * c_d * c_d);
 			if (contributor == median_contributor-1) {
 				dL_dz += dL_dmedian_depth;
-				dL_dweight += dL_dmax_dweight;
+				// dL_dweight += dL_dmax_dweight;
 			}
 #if DETACH_WEIGHT 
 			// if not detached weight, sometimes 
@@ -836,11 +827,13 @@ renderCUDA_2DGS(
 				float dG_ddely = -G * FilterInvSquare * d.y;
 				atomicAdd(&dL_dmean2D[global_id].x, dL_dG * dG_ddelx); // not scaled
 				atomicAdd(&dL_dmean2D[global_id].y, dL_dG * dG_ddely); // not scaled
-				atomicAdd(&dL_dtransMat[global_id * 9 + 8],  dL_dz); // propagate depth loss
+				atomicAdd(&dL_dtransMat[global_id * 9 + 6],  s.x * dL_dz);
+				atomicAdd(&dL_dtransMat[global_id * 9 + 7],  s.y * dL_dz);
+				atomicAdd(&dL_dtransMat[global_id * 9 + 8],  dL_dz);
 			}
 
 			// Update gradients w.r.t. opacity of the Gaussian
-			atomicAdd(&(dL_dopacity[global_id]), G * dL_dalpha);
+			atomicAdd(&(dL_dopacity[global_id]),  G * dL_dalpha);
 		}
 	}
 }
@@ -855,6 +848,7 @@ renderCUDA_GUDF(
 	const float* __restrict__ bg_color,
 	const float2* __restrict__ points_xy_image,
 	const float4* __restrict__ normal_opacity,
+	const float* __restrict__ max_alphas,
 	const float3* __restrict__ points3d,
 	const float* __restrict__ kappas,
 	const glm::vec3* __restrict__ scales,
@@ -880,7 +874,7 @@ renderCUDA_GUDF(
 	const uint2 pix_max = { min(pix_min.x + BLOCK_X, W), min(pix_min.y + BLOCK_Y , H) };
 	const uint2 pix = { pix_min.x + block.thread_index().x, pix_min.y + block.thread_index().y };
 	const uint32_t pix_id = W * pix.y + pix.x;
-	const float2 pixf = { (float)pix.x + 0.5, (float)pix.y + 0.5};
+	const float2 pixf = { (float)pix.x , (float)pix.y};
 
 	const bool inside = pix.x < W&& pix.y < H;
 	const uint2 range = ranges[block.group_index().y * horizontal_blocks + block.group_index().x];
@@ -898,7 +892,7 @@ renderCUDA_GUDF(
 	__shared__ float collected_kappas[BLOCK_SIZE];
 	__shared__ glm::vec3 collected_scales[BLOCK_SIZE];
 	__shared__ float collected_view2gaussian[BLOCK_SIZE * 16];
-	// __shared__ float collected_depths[BLOCK_SIZE];
+	__shared__ float collected_malphas[BLOCK_SIZE];
 
 	// In the forward, we stored the final value for T, the
 	// product of all (1 - alpha) factors. 
@@ -940,8 +934,9 @@ renderCUDA_GUDF(
 	float accum_alpha_rec = 0;
 	float accum_normal_rec[3] = {0};
 	// for compute gradient with respect to the distortion map
-	float final_D = inside ? final_Ts[pix_id + H * W] : 0;
-	float final_D2 = inside ? final_Ts[pix_id + 2 * H * W] : 0;
+	const float final_A = inside ? final_Ts[pix_id + 3 * H * W] : 0;
+	const float final_D = inside ? final_Ts[pix_id + H * W] : 0;
+	const float final_D2 = inside ? final_Ts[pix_id + 2 * H * W] : 0;
 	float last_dL_dT = 0;
 #endif
 
@@ -951,6 +946,7 @@ renderCUDA_GUDF(
 	}
 
 	float last_alpha = 0;
+	float last_opacity = 0;
 	float last_color[C] = { 0 };
 
 	// Gradient of pixel coordinate w.r.t. normalized 
@@ -979,6 +975,7 @@ renderCUDA_GUDF(
 			for (int i = 0; i < C; i++)
 				collected_colors[i * BLOCK_SIZE + block.thread_rank()] = colors[coll_id * C + i];
 				// collected_depths[block.thread_rank()] = depths[coll_id];
+			collected_malphas[block.thread_rank()] = max_alphas[coll_id];
 		}
 		block.sync();
 
@@ -1003,46 +1000,91 @@ renderCUDA_GUDF(
 			float dT_dscale[3] = {0.,0.,0.};
 			float dD_dscale[3] = {0.,0.,0.};
 			float dD_dV2G[16]={0.,0.,0.,0.,0.,0.,0.,0.,0.,0.,0.,0.,0.,0.,0.,0.};
-			float UDF_opacity = 0, depth;
+			float UDF_opacity = 0, depth = 0;
 
 			UDF_opacity = 1 - computeOpacityGUDF(p_world,normal,collected_kappas[j],W,H,focal_x,focal_y,
 				collected_view2gaussian+j*16,pixf,collected_scales[j],
 				&depth,&dT_dkappa,dT_dV2G,dT_dnormal3D,dT_dscale,
 				&dD_dkappa,dD_dV2G,dD_dnormal3D,dD_dscale 
 				);
-				// if(isnan(dT_dscale[0]) || isnan(dT_dscale[1]) || isnan(dT_dscale[2])){
-				// if(isinf(dT_dkappa) || isinf(dD_dkappa) ){
+			if (UDF_opacity < 1e-6f) continue; 
+			if (depth < 0.1) continue; 
+			// if(isnan(dT_dscale[0]) || isnan(dT_dscale[1]) || isnan(dT_dscale[2]) 
+			// 	|| isinf(dT_dscale[0] || isinf(dT_dscale[1]) || isinf(dT_dscale[2]))){
+			// if(isinf(dT_dkappa) || isnan(dT_dkappa)){
+			
+			// // if (abs(dD_dscale[2] > 1000000)){
 
-				// if(collected_id[j] == 129199 && pix_id == 95718 ){
-				// 	// printf("gaussian_id %d pix_id %d\n",collected_id[j], pix_id);
-				// 	printf("pix_id %d dT_dscale: %f %f %f\n",pix_id,dT_dscale[0],dT_dscale[1],dT_dscale[2]);
-				// 	printf("pixf: %f %f\n",pixf.x,pixf.y);
-				// 	printf("W H: %d %d\n",W,H);
-				// 	printf("focal_x focal_y: %f %f\n",focal_x,focal_y);
-				// 	// print viewmat
+			
+			// // if(collected_id[j] == 17133){
+			// // 	// printf("gaussian_id %d pix_id %d\n",collected_id[j], pix_id);
+			// 	float * view2gaussian = collected_view2gaussian + j * 16;
+			// // 	// printf("%f\n%f %f\n%d %d\n%f %f\n%f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f\n%f %f %f\n%f %f %f\n%f %f %f\n%f\n%f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f\n%f %f %f\n%f %f %f\n",
+			// // 	// 	depth,
+			// // 	// 	pixf.x,pixf.y,
+			// // 	// 	W,H,
+			// // 	// 	focal_x,focal_y,
+			// // 	// 	view2gaussian[0],view2gaussian[1],view2gaussian[2],view2gaussian[3],
+			// // 	// 	view2gaussian[4],view2gaussian[5],view2gaussian[6],view2gaussian[7],
+			// // 	// 	view2gaussian[8],view2gaussian[9],view2gaussian[10],view2gaussian[11],
+			// // 	// 	view2gaussian[12],view2gaussian[13],view2gaussian[14],view2gaussian[15],
+			// // 	// 	collected_scales[j].x,collected_scales[j].y,collected_scales[j].z,
+			// // 	// 	normal[0],normal[1],normal[2],
+			// // 	// 	p_world.x,p_world.y,p_world.z,
+			// // 	// 	collected_kappas[j],
+			// // 	// 	dD_dV2G[0],dD_dV2G[1],dD_dV2G[2],dD_dV2G[3],
+			// // 	// 	dD_dV2G[4],dD_dV2G[5],dD_dV2G[6],dD_dV2G[7],
+			// // 	// 	dD_dV2G[8],dD_dV2G[9],dD_dV2G[10],dD_dV2G[11],
+			// // 	// 	dD_dV2G[12],dD_dV2G[13],dD_dV2G[14],dD_dV2G[15],
+			// // 	// 	dD_dnormal3D[0],dD_dnormal3D[1],dD_dnormal3D[2],
+			// // 	// 	dD_dscale[0],dD_dscale[1],dD_dscale[2]
+			// // 	// );
+				// printf("%f %f\n%d %d\n%f %f\n%f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f\n%f %f %f\n%f %f %f\n%f %f %f\n%f\n",
+				// 	// depth,
+				// 	pixf.x,pixf.y,
+				// 	W,H,
+				// 	focal_x,focal_y,
+				// 	view2gaussian[0],view2gaussian[1],view2gaussian[2],view2gaussian[3],
+				// 	view2gaussian[4],view2gaussian[5],view2gaussian[6],view2gaussian[7],
+				// 	view2gaussian[8],view2gaussian[9],view2gaussian[10],view2gaussian[11],
+				// 	view2gaussian[12],view2gaussian[13],view2gaussian[14],view2gaussian[15],
+				// 	collected_scales[j].x,collected_scales[j].y,collected_scales[j].z,
+				// 	normal[0],normal[1],normal[2],
+				// 	p_world.x,p_world.y,p_world.z,
+				// 	collected_kappas[j]
+				// );
+			// // 	// printf("pix_id %d dT_dscale: %f %f %f\n",pix_id,dT_dscale[0],dT_dscale[1],dT_dscale[2]);
+			// // 	// printf("pixf: %f %f\n",pixf.x,pixf.y);
+			// // 	// printf("W H: %d %d\n",W,H);
+			// // 	// printf("focal_x focal_y: %f %f\n",focal_x,focal_y);
+			// // 	// // print viewmat
 
-				// 	printf("V2G: ");
-				// 	float * view2gaussian = collected_view2gaussian + j * 16;
-				// 	for(int m=0;m<4;m++){
-				// 		for(int n=0;n<4;n++){
-				// 			printf("%f ",view2gaussian[m*4+n]);
-				// 		}
-				// 		printf("\n");
-				// 	}
-				// 	printf("scale: %f %f %f\n",collected_scales[j].x,collected_scales[j].y,collected_scales[j].z);; 
-				// 	printf("normal: %f %f %f\n",normal[0],normal[1],normal[2]);
-				// 	printf("p_world: %f %f %f\n",p_world.x,p_world.y,p_world.z);
-				// 	printf("kappa: %f\n",collected_kappas[j]);
-				// }
+			// // 	// printf("V2G: ");
+			// // 	// for(int m=0;m<4;m++){
+			// // 	// 	for(int n=0;n<4;n++){
+			// // 	// 		printf("%f ",view2gaussian[m*4+n]);
+			// // 	// 	}
+			// // 	// 	printf("\n");
+			// // 	// }
+			// // 	// printf("scale: %f %f %f\n",collected_scales[j].x,collected_scales[j].y,collected_scales[j].z);; 
+			// // 	// printf("normal: %f %f %f\n",normal[0],normal[1],normal[2]);
+			// // 	// printf("p_world: %f %f %f\n",p_world.x,p_world.y,p_world.z);
+			// // 	// printf("kappa: %f\n",collected_kappas[j]);
+			// }
 			
 			float alpha = min(0.99f, nor_o.w * UDF_opacity );
-			
+			float max_alpha = collected_malphas[j];
+			// alpha = alpha / max_alpha;
+		
 			// const float alpha = min(0.99f, UDF_opacity);
 
+			
 			if (alpha < 1.0f / 255.0f)
 				continue;
 
-			T = T / (1.f - alpha);
+			float tmp_T = T;
+			T = T / (1.f - alpha + 1e-8);
+
 			const float dchannel_dcolor = alpha * T;
 
 			// Propagate gradients to per-Gaussian colors and keep
@@ -1065,36 +1107,46 @@ renderCUDA_GUDF(
 				atomicAdd(&(dL_dcolors[global_id * C + ch]), dchannel_dcolor * dL_dchannel);
 			}
 
+
 			float dL_dz = 0.0f;
 			float dL_dweight = 0;
 #if RENDER_AXUTILITY
-// 			float m_d = (FAR_PLANE * depth - FAR_PLANE * NEAR_PLANE) / ((FAR_PLANE - NEAR_PLANE) * depth);
-// 			float dmd_dd = (FAR_PLANE * NEAR_PLANE) / ((FAR_PLANE - NEAR_PLANE) * depth * depth);
+			float depth_u = depth;
+			float m_d = (FAR_PLANE * depth_u - FAR_PLANE * NEAR_PLANE) / ((FAR_PLANE - NEAR_PLANE) * depth_u );
+			// float m_d = depth;
+			// if (isnan(m_d) || isinf(m_d)){
+			// 	printf("depth: %f, UDF_opacity: %f ,max_alpha: %f\n", depth,UDF_opacity,max_alpha);
+			// }
+			float dmd_dd = (FAR_PLANE * NEAR_PLANE) / ((FAR_PLANE - NEAR_PLANE) * depth_u * depth_u);
+			// float dmd_dd = 1;
+			
 			if (contributor == median_contributor-1) {
 				dL_dz += dL_dmedian_depth;
 				dL_dweight += dL_dmax_dweight;
 			}
-// 			// final_A -= nor_o.w * T;
-// 			// final_D -= m_d * nor_o.w * T;
-// 			// final_D2 -= m_d * m_d * nor_o.w * T; 
-// #if DETACH_WEIGHT 
-// 			// if not detached weight, sometimes 
-// 			// it will bia toward creating extragated 2D Gaussians near front
-// 			dL_dweight += 0;
-// #else
-// 			dL_dweight += (final_D2 + m_d * m_d * final_A - 2 * m_d * final_D) * dL_dreg;
-// #endif
-// 			// dL_dalpha -= last_dL_dT;
-// 			// propagate the current weight W_{i} to next weight W_{i-1}
-// 			// last_dL_dT = (1 - alpha) * last_dL_dT;
-			
-// 			float dL_dmd = 2.0f * (T * nor_o.w) * (m_d * final_A - final_D) * dL_dreg;
-// 			dL_dz += dL_dmd * dmd_dd;
+			float A = final_A - nor_o.w * T;
+			float D = final_D - m_d * nor_o.w * T;
+			float D2 = final_D2 - m_d * m_d * nor_o.w * T; 
+#if DETACH_WEIGHT 
+			// if not detached weight, sometimes 
+			// it will bia toward creating extragated 2D Gaussians near front
+			dL_dweight += 0;
+#else
+			dL_dweight += (D2 + m_d * m_d * A - 2 * m_d * D) * dL_dreg;
+#endif
+			dL_dalpha -= nor_o.w * last_dL_dT * dL_dweight;
+			// propagate the current weight W_{i} to next weight W_{i-1}
+			last_dL_dT = (1 - alpha) * last_dL_dT;
+			atomicAdd(&dL_dopacity[global_id], T * dL_dweight);
+			float dL_dmd = 2.0f * (T * nor_o.w) * (m_d * A - D) * dL_dreg;
+			dL_dz += dL_dmd * dmd_dd;
 			
 			// Propagate gradients w.r.t ray-splat depths
-			accum_depth_rec = last_alpha * last_depth + (1.f - last_alpha) * accum_depth_rec;
+			accum_depth_rec = last_opacity * last_depth + (1.f - last_alpha) * accum_depth_rec;
 			last_depth = depth;
-			dL_dalpha += (depth - accum_depth_rec) * dL_ddepth;
+			dL_dalpha += - accum_depth_rec * dL_ddepth;
+			atomicAdd(&dL_dopacity[global_id], depth * T * dL_ddepth);
+
 			// Propagate gradients w.r.t. color ray-splat alphas
 			accum_alpha_rec = last_alpha * 1.0 + (1.f - last_alpha) * accum_alpha_rec;
 			dL_dalpha += (1 - accum_alpha_rec) * dL_daccum;
@@ -1111,14 +1163,22 @@ renderCUDA_GUDF(
 			dL_dalpha *= T;
 			// Update last alpha (to be used in the next iteration)
 			last_alpha = alpha;
-
+			last_opacity = nor_o.w;
 			// Account for fact that alpha also influences how much of
 			// the background color is added if nothing left to blend
 			float bg_dot_dpixel = 0;
 			for (int i = 0; i < C; i++)
 				bg_dot_dpixel += bg_color[i] * dL_dpixel[i];
+
 			dL_dalpha += (-T_final / (1.f - alpha)) * bg_dot_dpixel;
+
 			float dL_dT = -nor_o.w * dL_dalpha;
+			// float dL_dT = -nor_o.w * dL_dalpha / max_alpha;
+			
+			// float dL_dmax_alpha = - dL_dalpha * alpha / max_alpha;
+			// float ks = expf(-collected_kappas[j] * collected_scales[j].z);
+			// atomicAdd(&dL_dkappas[global_id], dL_dmax_alpha * collected_scales[j].z * ks);
+			// atomicAdd(&dL_dscale[global_id][2], dL_dmax_alpha * collected_kappas[j] * ks); 
 			// float dL_dT = -dL_dalpha;
 
 			// if (dL_dT > 1e2){
@@ -1139,12 +1199,9 @@ renderCUDA_GUDF(
 			atomicAdd(&dL_dscale[global_id][0], dL_dT * dT_dscale[0]);
 			atomicAdd(&dL_dscale[global_id][1], dL_dT * dT_dscale[1]);
 			atomicAdd(&dL_dscale[global_id][2], dL_dT * dT_dscale[2]);
-			// if( (isnan(dL_dscale[global_id][0]) || isnan(dL_dscale[global_id][1]) || isnan(dL_dscale[global_id][2]) || isinf(dL_dscale[global_id][1]) || isinf(dL_dscale[global_id][2]) || isinf(dL_dscale[global_id][0])) ){ 
-			// 	// printf("\n", );
-			// 	printf("dT_dscale: %f %f %f dL_dT: %f alpha :%f udf_o :%f \n",dT_dscale[0], dT_dscale[1], dT_dscale[2], dL_dT,alpha,UDF_opacity);
-			// 	// printf("dL_dscale: %f %f %f\n", dL_dscale[global_id][0], dL_dscale[global_id][1], dL_dscale[global_id][2]);
-			// // 	printf("nor_o.w dL_dalpha: %f %f\n", nor_o.w, dL_dalpha);
-			// }
+		// if (isnan(dL_dscales[idx][0]) || isnan(dL_dscales[idx][1]) || isinf(dL_dscales[idx][0]) || isinf(dL_dscales[idx][1])) printf("id: %d \n",idx);
+
+			
 
 			// Update gradients w.r.t. opacity of the Gaussian
 			atomicAdd(&(dL_dopacity[global_id]), alpha / (nor_o.w + 1e-5) * dL_dalpha);
@@ -1157,8 +1214,8 @@ renderCUDA_GUDF(
 			
 			// backprop depth gradient
 #if RENDER_AXUTILITY
-			dL_dz += T * dL_ddepth; 
-#endif
+			dL_dz += nor_o.w * T * dL_ddepth; 
+#endif	
 			atomicAdd(&dL_dkappas[global_id], dL_dz * dD_dkappa);
 			for (int ii = 0; ii < 16; ii++) 
 			{
@@ -1168,105 +1225,153 @@ renderCUDA_GUDF(
 			atomicAdd(&dL_dscale[global_id][1], dL_dz * dD_dscale[1]);
 			atomicAdd(&dL_dscale[global_id][2], dL_dz * dD_dscale[2]);
 
+			// 	// printf("\n", );
+			// 	printf("dT_dscale: %f %f %f dL_dT: %f dD_dscale: %f %f %f dL_dz: %f \n",dL_dT * dT_dscale[0], dL_dT * dT_dscale[1], dL_dT * dT_dscale[2], dL_dT,
+			// 		dL_dz * dD_dscale[0], dL_dz * dD_dscale[1], dL_dz * dD_dscale[2], dL_dz);
+			// 	// printf("dL_dscale: %f %f %f\n", dL_dscale[global_id][0], dL_dscale[global_id][1], dL_dscale[global_id][2]);
+			// // 	printf("nor_o.w dL_dalpha: %f %f\n", nor_o.w, dL_dalpha);
+			// }
+			atomicAdd((&dL_dnormal3D[global_id * 3]), dL_dz * dD_dnormal3D.x);
+			atomicAdd((&dL_dnormal3D[global_id * 3 + 1]), dL_dz * dD_dnormal3D.y);
+			atomicAdd((&dL_dnormal3D[global_id * 3 + 2]), dL_dz * dD_dnormal3D.z);
 		}
 	}
 }
 
-inline __device__ void computeTransMat(
-	const glm::vec3 & p_world,
-	const glm::vec4 & quat,
-	const glm::vec2 & scale,
-	const float* viewmat,
-	const float4 & intrins,
-	float tan_fovx, 
-	float tan_fovy,
-	const float* transMat,
-	const float* dL_dtransMat,
-	const float* dL_dnormal3D,
-	glm::vec3 & dL_dmean3D,
-	glm::vec2 & dL_dscale,
-	glm::vec4 & dL_drot
-) {
-	// camera information 
-	const glm::mat3 W = glm::mat3(
-		viewmat[0],viewmat[1],viewmat[2],
-		viewmat[4],viewmat[5],viewmat[6],
-		viewmat[8],viewmat[9],viewmat[10]
-	); // viewmat 
+__device__ void compute_transmat_aabb(
+	int idx, 
+	const float* Ts_precomp,
+	const float3* p_origs, 
+	const glm::vec3* scales, 
+	const glm::vec4* rots, 
+	const float* projmatrix, 
+	const float* viewmatrix, 
+	const int W, const int H, 
+	const float3* dL_dnormals,
+	const float3* dL_dmean2Ds, 
+	float* dL_dTs, 
+	glm::vec3* dL_dmeans, 
+	glm::vec3* dL_dscales,
+	 glm::vec4* dL_drots)
+{
+	glm::mat3 T;
+	float3 normal;
+	glm::mat3x4 P;
+	glm::mat3 R;
+	glm::mat3 S;
+	float3 p_orig;
+	glm::vec4 rot;
+	glm::vec2 scale;
+	
+	// Get transformation matrix of the Gaussian
+	if (Ts_precomp != nullptr) {
+		T = glm::mat3(
+			Ts_precomp[idx * 9 + 0], Ts_precomp[idx * 9 + 1], Ts_precomp[idx * 9 + 2],
+			Ts_precomp[idx * 9 + 3], Ts_precomp[idx * 9 + 4], Ts_precomp[idx * 9 + 5],
+			Ts_precomp[idx * 9 + 6], Ts_precomp[idx * 9 + 7], Ts_precomp[idx * 9 + 8]
+		);
+		normal = {0.0, 0.0, 0.0};
+	} else {
+		p_orig = p_origs[idx];
+		rot = rots[idx];
+		scale.x = scales[idx].x;
+		scale.y = scales[idx].y;
+		R = quat_to_rotmat(rot);
+		S = scale_to_mat(scales[idx], 1.0f);
+		S[2][2] = 1.0f;
+		glm::mat3 L = R * S;
+		glm::mat3x4 M = glm::mat3x4(
+			glm::vec4(L[0], 0.0),
+			glm::vec4(L[1], 0.0),
+			glm::vec4(p_orig.x, p_orig.y, p_orig.z, 1)
+		);
 
-	const glm::vec3 cam_pos = glm::vec3(viewmat[12], viewmat[13], viewmat[14]); // camera center
-	const glm::mat4 P = glm::mat4(
-		intrins.x, 0.0, 0.0, 0.0,
-		0.0, intrins.y, 0.0, 0.0,
-		intrins.z, intrins.w, 1.0, 1.0,
-		0.0, 0.0, 0.0, 0.0
+		glm::mat4 world2ndc = glm::mat4(
+			projmatrix[0], projmatrix[4], projmatrix[8], projmatrix[12],
+			projmatrix[1], projmatrix[5], projmatrix[9], projmatrix[13],
+			projmatrix[2], projmatrix[6], projmatrix[10], projmatrix[14],
+			projmatrix[3], projmatrix[7], projmatrix[11], projmatrix[15]
+		);
+
+		glm::mat3x4 ndc2pix = glm::mat3x4(
+			glm::vec4(float(W) / 2.0, 0.0, 0.0, float(W-1) / 2.0),
+			glm::vec4(0.0, float(H) / 2.0, 0.0, float(H-1) / 2.0),
+			glm::vec4(0.0, 0.0, 0.0, 1.0)
+		);
+
+		P = world2ndc * ndc2pix;
+		T = glm::transpose(M) * P;
+		normal = transformVec4x3({L[2].x, L[2].y, L[2].z}, viewmatrix);
+	}
+
+	// Update gradients w.r.t. transformation matrix of the Gaussian
+	glm::mat3 dL_dT = glm::mat3(
+		dL_dTs[idx*9+0], dL_dTs[idx*9+1], dL_dTs[idx*9+2],
+		dL_dTs[idx*9+3], dL_dTs[idx*9+4], dL_dTs[idx*9+5],
+		dL_dTs[idx*9+6], dL_dTs[idx*9+7], dL_dTs[idx*9+8]
 	);
+	float3 dL_dmean2D = dL_dmean2Ds[idx];
+	if(dL_dmean2D.x != 0 || dL_dmean2D.y != 0)
+	{
+		glm::vec3 t_vec = glm::vec3(9.0f, 9.0f, -1.0f);
+		float d = glm::dot(t_vec, T[2] * T[2]);
+		glm::vec3 f_vec = t_vec * (1.0f / d);
+		glm::vec3 dL_dT0 = dL_dmean2D.x * f_vec * T[2];
+		glm::vec3 dL_dT1 = dL_dmean2D.y * f_vec * T[2];
+		glm::vec3 dL_dT3 = dL_dmean2D.x * f_vec * T[0] + dL_dmean2D.y * f_vec * T[1];
+		glm::vec3 dL_df = dL_dmean2D.x * T[0] * T[2] + dL_dmean2D.y * T[1] * T[2];
+		float dL_dd = glm::dot(dL_df, f_vec) * (-1.0 / d);
+		glm::vec3 dd_dT3 = t_vec * T[2] * 2.0f;
+		dL_dT3 += dL_dd * dd_dT3;
+		dL_dT[0] += dL_dT0;
+		dL_dT[1] += dL_dT1;
+		dL_dT[2] += dL_dT3;
 
-	glm::mat3 S = scale_to_mat({scale.x, scale.y, 1.0f}, 1.0f);
-	glm::mat3 R = quat_to_rotmat(quat);
-	glm::mat3 RS = R * S;
-	glm::vec3 p_view = W * p_world + cam_pos;
-	glm::mat3 M = glm::mat3(W * RS[0], W * RS[1], p_view);
+		if (Ts_precomp != nullptr) {
+			dL_dTs[idx * 9 + 0] = dL_dT[0].x;
+			dL_dTs[idx * 9 + 1] = dL_dT[0].y;
+			dL_dTs[idx * 9 + 2] = dL_dT[0].z;
+			dL_dTs[idx * 9 + 3] = dL_dT[1].x;
+			dL_dTs[idx * 9 + 4] = dL_dT[1].y;
+			dL_dTs[idx * 9 + 5] = dL_dT[1].z;
+			dL_dTs[idx * 9 + 6] = dL_dT[2].x;
+			dL_dTs[idx * 9 + 7] = dL_dT[2].y;
+			dL_dTs[idx * 9 + 8] = dL_dT[2].z;
+			return;
+		}
+	}
+	
+	if (Ts_precomp != nullptr) return;
 
-
-	glm::mat4x3 dL_dT = glm::mat4x3(
-		dL_dtransMat[0], dL_dtransMat[1], dL_dtransMat[2],
-		dL_dtransMat[3], dL_dtransMat[4], dL_dtransMat[5],
-		dL_dtransMat[6], dL_dtransMat[7], dL_dtransMat[8],
-		0.0, 0.0, 0.0
-	);
-
-	glm::mat3x4 dL_dM_aug = glm::transpose(P) * glm::transpose(dL_dT);
-	glm::mat3 dL_dM = glm::mat3(
-		glm::vec3(dL_dM_aug[0]),
-		glm::vec3(dL_dM_aug[1]),
-		glm::vec3(dL_dM_aug[2])
-	);
-
-	glm::mat3 W_t = glm::transpose(W);
-	glm::mat3 dL_dRS = W_t * dL_dM;
-	glm::vec3 dL_dRS0 = dL_dRS[0];
-	glm::vec3 dL_dRS1 = dL_dRS[1];
-	glm::vec3 dL_dpw = dL_dRS[2];
-	glm::vec3 dL_dtn = W_t * glm::vec3(dL_dnormal3D[0], dL_dnormal3D[1], dL_dnormal3D[2]);
-
+	// Update gradients w.r.t. scaling, rotation, position of the Gaussian
+	glm::mat3x4 dL_dM = P * glm::transpose(dL_dT);
+	float3 dL_dtn = transformVec4x3Transpose(dL_dnormals[idx], viewmatrix);
 #if DUAL_VISIABLE
-	glm::vec3 tn = W*R[2];
-	float cos = glm::dot(-tn, M[2]);
-	float multiplier = cos > 0 ? 1 : -1;
-	dL_dtn *= multiplier;
+	float3 p_view = transformPoint4x3(p_orig, viewmatrix);
+	float cos = -sumf3(p_view * normal);
+	float multiplier = cos > 0 ? 1: -1;
+	dL_dtn = multiplier * dL_dtn;
 #endif
+	glm::mat3 dL_dRS = glm::mat3(
+		glm::vec3(dL_dM[0]),
+		glm::vec3(dL_dM[1]),
+		glm::vec3(dL_dtn.x, dL_dtn.y, dL_dtn.z)
+	);
 
 	glm::mat3 dL_dR = glm::mat3(
-		dL_dRS0 * glm::vec3(scale.x),
-		dL_dRS1 * glm::vec3(scale.y),
-		dL_dtn
-	);
-	// glm::mat3 dL_dR = glm::mat3(
-	// 	glm::vec3(0.,0.,0.),
-	// 	glm::vec3(0.,0.,0.),
-	// 	dL_dtn
-	// );
-	double n = dL_dRS0[0] * dL_dRS0[0] + dL_dRS0[1] * dL_dRS0[1] + dL_dRS0[2] * dL_dRS0[2];
-	// if(n > 1e-6){
-	// 	// print dL_dtransMat
-	// 	for(int i = 0; i < 9; i++){
-	// 		printf("%f ", dL_dtransMat[i]);
-	// 	}
-	// 	printf("\n");
-	// }
-	dL_drot = quat_to_rotmat_vjp(quat, dL_dR);
-	dL_dscale = glm::vec2(
-		(float)glm::dot(dL_dRS0, R[0]),
-		(float)glm::dot(dL_dRS1, R[1])
-	);
-	// if(abs(dL_dscale[0]) > 1e-5 || abs(dL_dscale[1]) > 1e-5){
-	// 	printf("scale: %f, %f\n", dL_dscale[0], dL_dscale[1]); 
-	// }
+		dL_dRS[0] * glm::vec3(scale.x),
+		dL_dRS[1] * glm::vec3(scale.y),
+		dL_dRS[2]);
+	// if(idx == 11834) printf("scale: %f %f \n", scale.x,scale.y);
 
-	dL_dmean3D = dL_dpw;
+	dL_drots[idx] = quat_to_rotmat_vjp(rot, dL_dR);
+	dL_dscales[idx] += glm::vec3(
+		(float)glm::dot(dL_dRS[0], R[0]),
+		(float)glm::dot(dL_dRS[1], R[1]),
+		0
+	);
+	dL_dmeans[idx] = glm::vec3(dL_dM[2]);
 }
-
 
 
 template<int C>
@@ -1289,12 +1394,13 @@ __global__ void preprocessCUDA(
 	const float tan_fovy,
 	const glm::vec3* campos, 
 	// grad input
-	const float* dL_dtransMats,
+	float* dL_dtransMats,
 	const float* dL_dview2gaussian,
 	const float* dL_dnormal3Ds,
 	float* dL_dcolors,
 	float* dL_dshs,
 	// grad output
+	float3* dL_dmean2Ds,
 	glm::vec3* dL_dmean3Ds,
 	glm::vec3* dL_dscales,
 	glm::vec4* dL_drots)
@@ -1303,95 +1409,29 @@ __global__ void preprocessCUDA(
 	if (idx >= P || !(radii[idx] > 0))
 		return;
 
-	const float* transMat = &(transMats[9 * idx]);
-	const float* dL_dtransMat = &(dL_dtransMats[9 * idx]);
-	const float* dL_dnormal3D = &(dL_dnormal3Ds[3 * idx]);
-
-	glm::vec3 p_world = glm::vec3(means3D[idx].x, means3D[idx].y, means3D[idx].z);
-	float4 intrins = {focal_x, focal_y, focal_x * tan_fovx, focal_y * tan_fovy};
-
-	glm::vec3 dL_dmean3D;
-	glm::vec2 dL_dscale;
-	glm::vec4 dL_drot;
-	glm::vec2 scale2 = glm::vec2(scales[idx].x, scales[idx].y);
-	// if (isnan(dL_dscales[idx][0]) || isnan(dL_dscales[idx][1]) || isinf(dL_dscales[idx][0]) || isinf(dL_dscales[idx][1])) printf("id: %d \n",idx);
-	computeTransMat(
-		p_world,
-		rotations[idx],
-		scale2,
-		viewmatrix,
-		intrins,
-		tan_fovx,
-		tan_fovy,
-		transMat, 
-		dL_dtransMat,
-		dL_dnormal3D,
-		dL_dmean3D, 
-		dL_dscale,
-		dL_drot
+	const int W = int(focal_x * tan_fovx * 2);
+	const int H = int(focal_y * tan_fovy * 2);
+	const float * Ts_precomp = (scales) ? nullptr : transMats;
+	compute_transmat_aabb(
+		idx, 
+		Ts_precomp,
+		means3D, scales, rotations, 
+		projmatrix, viewmatrix, W, H, 
+		(float3*)dL_dnormal3Ds, 
+		dL_dmean2Ds,
+		(dL_dtransMats), 
+		dL_dmean3Ds, 
+		dL_dscales, 
+		dL_drots
 	);
-	// update 
-	dL_dmean3Ds[idx] += dL_dmean3D;
-	dL_dscales[idx][0] += dL_dscale[0];
-	dL_dscales[idx][1] += dL_dscale[1];
+	float depth = transMats[idx * 9 + 8];
 
-	dL_drots[idx] = dL_drot;
 	computeView2Gaussian_backward(idx, means3D[idx], rotations[idx], viewmatrix, view2gaussian + 16 * idx, dL_dview2gaussian + 16 * idx, dL_dmean3Ds, dL_drots);
 
 	if (shs)
 		computeColorFromSH(idx, D, M, (glm::vec3*)means3D, *campos, shs, clamped, (glm::vec3*)dL_dcolors, (glm::vec3*)dL_dmean3Ds, (glm::vec3*)dL_dshs);
-}
-
-__global__ void computeAABB(int P, 
-	const int * radii,
-	const float W, const float H,
-	const float * transMats,
-	float3 * dL_dmean2Ds,
-	float *dL_dtransMats) {
-	
-	auto idx = cg::this_grid().thread_rank();
-	if (idx >= P || !(radii[idx] > 0))
-		return;
-	
-	const float* transMat = transMats + 9 * idx;
-
-	const float3 dL_dmean2D = dL_dmean2Ds[idx];
-	glm::mat4x3 T = glm::mat4x3(
-		transMat[0], transMat[1], transMat[2],
-		transMat[3], transMat[4], transMat[5],
-		transMat[6], transMat[7], transMat[8],
-		transMat[6], transMat[7], transMat[8]
-	);
-
-	float d = glm::dot(glm::vec3(1.0, 1.0, -1.0), T[3] * T[3]);
-	glm::vec3 f = glm::vec3(1.0, 1.0, -1.0) * (1.0f / d);
-
-	glm::vec3 p = glm::vec3(
-		glm::dot(f, T[0] * T[3]),
-		glm::dot(f, T[1] * T[3]), 
-		glm::dot(f, T[2] * T[3]));
-
-	glm::vec3 dL_dT0 = dL_dmean2D.x * f * T[3];
-	glm::vec3 dL_dT1 = dL_dmean2D.y * f * T[3];
-	glm::vec3 dL_dT3 = dL_dmean2D.x * f * T[0] + dL_dmean2D.y * f * T[1];
-	glm::vec3 dL_df = (dL_dmean2D.x * T[0] * T[3]) + (dL_dmean2D.y * T[1] * T[3]);
-	float dL_dd = glm::dot(dL_df, f) * (-1.0 / d);
-	glm::vec3 dd_dT3 = glm::vec3(1.0, 1.0, -1.0) * T[3] * 2.0f;
-	dL_dT3 += dL_dd * dd_dT3;
-	dL_dtransMats[9 * idx + 0] += dL_dT0.x;
-	dL_dtransMats[9 * idx + 1] += dL_dT0.y;
-	dL_dtransMats[9 * idx + 2] += dL_dT0.z;
-	dL_dtransMats[9 * idx + 3] += dL_dT1.x;
-	dL_dtransMats[9 * idx + 4] += dL_dT1.y;
-	dL_dtransMats[9 * idx + 5] += dL_dT1.z;
-	dL_dtransMats[9 * idx + 6] += dL_dT3.x;
-	dL_dtransMats[9 * idx + 7] += dL_dT3.y;
-	dL_dtransMats[9 * idx + 8] += dL_dT3.z;
-
-	// just use to hack the projected 2D gradient here.
-	float z = transMat[8];
-	dL_dmean2Ds[idx].x = dL_dtransMats[9 * idx + 2] * z * W; // to ndc 
-	dL_dmean2Ds[idx].y = dL_dtransMats[9 * idx + 5] * z * H; // to ndc
+	dL_dmean2Ds[idx].x = dL_dtransMats[idx * 9 + 2] * depth * 0.5 * float(W); // to ndc 
+	dL_dmean2Ds[idx].y = dL_dtransMats[idx * 9 + 5] * depth * 0.5 * float(H); // to ndc
 }
 
 
@@ -1437,7 +1477,6 @@ void BACKWARD::preprocess(
 	const float* dL_dnormal3Ds,
 	float* dL_dtransMats,
 	float* dL_dview2gaussian,
-
 	float* dL_dcolors,
 	float* dL_dshs,
 	glm::vec3* dL_dmean3Ds,
@@ -1453,14 +1492,6 @@ void BACKWARD::preprocess(
 	// we do not use the center actually
 	float W = focal_x * tan_fovx;
 	float H = focal_y * tan_fovy;
-	computeAABB << <(P + 255) / 256, 256 >> >(
-		P,
-		radii,
-		W, H,
-		transMats,
-		dL_dmean2Ds,
-		dL_dtransMats);
-	
 	// propagate gradients from transMat to mean3d, scale, rot, sh, color
 	preprocessCUDA<NUM_CHANNELS><< <(P + 255) / 256, 256 >> > (
 		P, D, M,
@@ -1485,6 +1516,7 @@ void BACKWARD::preprocess(
 		dL_dnormal3Ds,
 		dL_dcolors,
 		dL_dshs,
+		dL_dmean2Ds,
 		dL_dmean3Ds,
 		dL_dscales,
 		dL_drots
@@ -1510,6 +1542,7 @@ void BACKWARD::render(
 	const float* kappas,
 	const float* viewmatrix,
 	const float4* normal_opacity,
+	const float* max_alphas,
 	const float* colors,
 	const float* transMats,
 	const float* view2gaussians,
@@ -1549,8 +1582,7 @@ void BACKWARD::render(
 			dL_dmean2D,
 			dL_dnormal3D,
 			dL_dopacity,
-			dL_dcolors
-			);
+			dL_dcolors);
 	}
 	else{
 		renderCUDA_GUDF<NUM_CHANNELS> << <grid, block >> >(
@@ -1561,6 +1593,7 @@ void BACKWARD::render(
 			bg_color,
 			means2D,
 			normal_opacity,
+			max_alphas,
 			means3D,
 			kappas,
 			scales,

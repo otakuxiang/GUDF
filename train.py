@@ -95,12 +95,16 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     viewpoint_stack = None
     ema_loss_for_log = 0.0
     ema_dist_for_log = 0.0
-    ema_normal_for_log = 0.0
+    ema_normal_for_log = 0.0 
+    ema_multi_view_geo_for_log = 0.0
+    ema_multi_view_pho_for_log = 0.0
 
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
     for iteration in range(first_iter, opt.iterations + 1):        
-
+        # if iteration == 15001:
+        #     # use udfw disable opacities
+        #     gaussians.disable_opacities()
         iter_start.record()
 
         gaussians.update_learning_rate(iteration)
@@ -114,6 +118,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             viewpoint_stack = scene.getTrainCameras().copy()
         viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
         udfw = weight_schedule(iteration, 15001, 15002, 0., 1.0)
+        # udfw = 1.0
         # print(udfw)
         render_pkg = render(viewpoint_cam, gaussians, pipe, background,lamda=udfw)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
@@ -126,7 +131,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # regularization
         lambda_normal = opt.lambda_normal if iteration > 7000 else 0.0
         lambda_dist = opt.lambda_dist if iteration > 3000 else 0.0
-        lambda_scale = 1.5 if iteration > 30000 else 0.0
+        lambda_scale = 0.5 if iteration > 30000 else 0.0
+        lambda_opacity = 0.1 if iteration > 30000 else 0.0
         rend_dist = render_pkg["rend_dist"]
         rend_normal  = render_pkg['rend_normal']
         surf_normal = render_pkg['surf_normal']
@@ -134,13 +140,18 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         normal_loss = lambda_normal * (normal_error).mean()
         dist_loss = lambda_dist * (rend_dist).mean()
         scale_loss = lambda_scale * (gaussians.get_scaling ** 2).mean()
+        opacity_reg = lambda_opacity * ((gaussians.get_kappas.log() / 6. -  gaussians.get_opacity) ** 2).mean()
         # if iteration % 10 == 0:
         #     print(dist_loss.item())
         # loss
         # multi-view loss
+        geo_loss = None
+        ncc_loss = None
         if iteration > opt.multi_view_weight_from_iter:
             nearest_cam = None if len(viewpoint_cam.nearest_id) == 0 else scene.getTrainCameras()[random.sample(viewpoint_cam.nearest_id,1)[0]]
             use_virtul_cam = False
+            # breakpoint()
+            
             if opt.use_virtul_cam and (np.random.random() < opt.virtul_cam_prob or nearest_cam is None):
                 nearest_cam = gen_virtul_cam(viewpoint_cam, trans_noise=dataset.multi_view_max_dis, deg_noise=dataset.multi_view_max_angle)
                 use_virtul_cam = True
@@ -173,35 +184,38 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                             [pts_in_view_cam[:,0] * viewpoint_cam.Fx / pts_in_view_cam[:,2] + viewpoint_cam.Cx,
                             pts_in_view_cam[:,1] * viewpoint_cam.Fy / pts_in_view_cam[:,2] + viewpoint_cam.Cy], -1).float()
                 pixel_noise = torch.norm(pts_projections - pixels.reshape(*pts_projections.shape), dim=-1)
-                d_mask = d_mask & (pixel_noise < pixel_noise_th)
+                d_mask = d_mask & (pixel_noise < pixel_noise_th) & (~pixel_noise.isinf()) & (~pixel_noise.isnan())
+                
+                # breakpoint()
                 weights = (1.0 / torch.exp(pixel_noise)).detach()
                 weights[~d_mask] = 0
-                if iteration % 200 == 0:
-                    import cv2
-                    debug_path = os.path.join(opt.output_dir, "debug")
-                    os.makedirs(debug_path, exist_ok=True)
-                    gt_img_show = ((gt_image).permute(1,2,0).clamp(0,1)[:,:,[2,1,0]]*255).detach().cpu().numpy().astype(np.uint8)
-                    if 'app_image' in render_pkg:
-                        img_show = ((render_pkg['app_image']).permute(1,2,0).clamp(0,1)[:,:,[2,1,0]]*255).detach().cpu().numpy().astype(np.uint8)
-                    else:
-                        img_show = ((image).permute(1,2,0).clamp(0,1)[:,:,[2,1,0]]*255).detach().cpu().numpy().astype(np.uint8)
-                    normal = render_pkg['rendered_normal'].permute(1,2,0).detach().cpu().numpy()
-                    depth_normal = render_pkg['surf_normal'].permute(1,2,0).detach().cpu().numpy()
-                    normal_show = (((normal+1.0)*0.5).permute(1,2,0).clamp(0,1)*255).detach().cpu().numpy().astype(np.uint8)
-                    depth_normal_show = (((depth_normal+1.0)*0.5).permute(1,2,0).clamp(0,1)*255).detach().cpu().numpy().astype(np.uint8)
-                    d_mask_show = (weights.float()*255).detach().cpu().numpy().astype(np.uint8).reshape(H,W)
-                    d_mask_show_color = cv2.applyColorMap(d_mask_show, cv2.COLORMAP_JET)
-                    depth = render_pkg['plane_depth'].squeeze().detach().cpu().numpy()
-                    depth_i = (depth - depth.min()) / (depth.max() - depth.min() + 1e-20)
-                    depth_i = (depth_i * 255).clip(0, 255).astype(np.uint8)
-                    depth_color = cv2.applyColorMap(depth_i, cv2.COLORMAP_JET)
-                    row0 = np.concatenate([gt_img_show, img_show, normal_show], axis=1)
-                    row1 = np.concatenate([d_mask_show_color, depth_color, depth_normal_show], axis=1)
-                    image_to_show = np.concatenate([row0, row1], axis=0)
-                    cv2.imwrite(os.path.join(debug_path, "%05d"%iteration + "_" + viewpoint_cam.image_name + ".jpg"), image_to_show)
+                # if iteration % 200 == 0:
+                #     import cv2
+                #     debug_path = os.path.join(opt.output_dir, "debug")
+                #     os.makedirs(debug_path, exist_ok=True)
+                #     gt_img_show = ((gt_image).permute(1,2,0).clamp(0,1)[:,:,[2,1,0]]*255).detach().cpu().numpy().astype(np.uint8)
+                #     if 'app_image' in render_pkg:
+                #         img_show = ((render_pkg['app_image']).permute(1,2,0).clamp(0,1)[:,:,[2,1,0]]*255).detach().cpu().numpy().astype(np.uint8)
+                #     else:
+                #         img_show = ((image).permute(1,2,0).clamp(0,1)[:,:,[2,1,0]]*255).detach().cpu().numpy().astype(np.uint8)
+                #     normal = render_pkg['rendered_normal'].permute(1,2,0).detach().cpu().numpy()
+                #     depth_normal = render_pkg['surf_normal'].permute(1,2,0).detach().cpu().numpy()
+                #     normal_show = (((normal+1.0)*0.5).permute(1,2,0).clamp(0,1)*255).detach().cpu().numpy().astype(np.uint8)
+                #     depth_normal_show = (((depth_normal+1.0)*0.5).permute(1,2,0).clamp(0,1)*255).detach().cpu().numpy().astype(np.uint8)
+                #     d_mask_show = (weights.float()*255).detach().cpu().numpy().astype(np.uint8).reshape(H,W)
+                #     d_mask_show_color = cv2.applyColorMap(d_mask_show, cv2.COLORMAP_JET)
+                #     depth = render_pkg['plane_depth'].squeeze().detach().cpu().numpy()
+                #     depth_i = (depth - depth.min()) / (depth.max() - depth.min() + 1e-20)
+                #     depth_i = (depth_i * 255).clip(0, 255).astype(np.uint8)
+                #     depth_color = cv2.applyColorMap(depth_i, cv2.COLORMAP_JET)
+                #     row0 = np.concatenate([gt_img_show, img_show, normal_show], axis=1)
+                #     row1 = np.concatenate([d_mask_show_color, depth_color, depth_normal_show], axis=1)
+                #     image_to_show = np.concatenate([row0, row1], axis=0)
+                #     cv2.imwrite(os.path.join(debug_path, "%05d"%iteration + "_" + viewpoint_cam.image_name + ".jpg"), image_to_show)
 
                 if d_mask.sum() > 0:
                     geo_loss = geo_weight * ((weights * pixel_noise)[d_mask]).mean()
+                
                     loss += geo_loss
                     if use_virtul_cam is False:
                         with torch.no_grad():
@@ -229,7 +243,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                             ref_to_neareast_t = -ref_to_neareast_r @ viewpoint_cam.world_view_transform[3,:3] + nearest_cam.world_view_transform[3,:3]
 
                         ## compute Homography
-                        ref_local_n = render_pkg["rendered_normal"].permute(1,2,0)
+                        ref_local_n = render_pkg["rend_normal"].permute(1,2,0)
                         ref_local_n = ref_local_n.reshape(-1,3)[valid_indices]
 
                         # ref_local_d = render_pkg['rendered_distance'].squeeze()
@@ -262,13 +276,19 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                         if mask.sum() > 0:
                             ncc_loss = ncc_weight * ncc.mean()
                             loss += ncc_loss
-        total_loss = loss + dist_loss + normal_loss + scale_loss
+                            if iteration > 7000:
+                                ncc_grad = torch.autograd.grad(ncc.mean(), render_pkg['surf_depth'],retain_graph=True)[0]
+                                geo_grad = torch.autograd.grad(geo_loss, render_pkg['surf_depth'],retain_graph=True)[0]
+                                if ncc_grad.isnan().any() or geo_grad.isnan().any():
+                                    breakpoint()
+                                
+        total_loss = loss + dist_loss + normal_loss + scale_loss + opacity_reg
         
         total_loss.backward()
-        # breakpoint()
         # exit()
-        # if iteration > 15000 and udfw > 0.:
-        #     exit()
+        # if iteration > 7000 and udfw > 0.:
+            # breakpoint()
+        
         iter_end.record()
 
         with torch.no_grad():
@@ -276,12 +296,13 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             ema_loss_for_log = loss.item() 
             ema_dist_for_log =  dist_loss.item() 
             ema_normal_for_log = normal_loss.item()
-            ema_multi_view_geo_for_log = 0.4 * geo_loss.item() if geo_loss is not None else 0.0 + 0.6 * ema_multi_view_geo_for_log
-            ema_multi_view_pho_for_log = 0.4 * ncc_loss.item() if ncc_loss is not None else 0.0 + 0.6 * ema_multi_view_pho_for_log
+            if iteration > opt.multi_view_weight_from_iter:
+                ema_multi_view_geo_for_log = 0.4 * geo_loss.item() if geo_loss is not None else 0.0 + 0.6 * ema_multi_view_geo_for_log
+                ema_multi_view_pho_for_log = 0.4 * ncc_loss.item() if ncc_loss is not None else 0.0 + 0.6 * ema_multi_view_pho_for_log
             import math
             if ema_dist_for_log == math.nan:
                 breakpoint()
-                
+                # print((gaussians.get_kappas_grad().sign() * gaussians.get_opacity_grad().sign() < 0).nonzero().shape)
 
             if iteration % 10 == 0:
                 loss_dict = {
@@ -289,7 +310,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     "distort": f"{ema_dist_for_log:.{5}f}",
                     "normal": f"{ema_normal_for_log:.{5}f}",
                     "Points": f"{len(gaussians.get_xyz)}",
-                    "scales": f"{gaussians.get_scaling.mean().item():.{5}f}",
+                    "scales": f"{gaussians.get_scaling[...,:2].mean().item():.{5}f}",
                 }
                 progress_bar.set_postfix(loss_dict)
 
@@ -301,13 +322,19 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if tb_writer is not None:
                 tb_writer.add_scalar('train_loss_patches/dist_loss', ema_dist_for_log, iteration)
                 tb_writer.add_scalar('train_loss_patches/normal_loss', ema_normal_for_log, iteration)
+                if iteration > opt.multi_view_weight_from_iter:
+                    tb_writer.add_scalar('train_loss_patches/ema_multi_view_geo', ema_multi_view_geo_for_log, iteration)
+                    tb_writer.add_scalar('train_loss_patches/ema_multi_view_pho', ema_multi_view_pho_for_log, iteration)
 
             training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background,udfw))
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
-
-
+            
+            # Prune Gaussians according to kappa
+            # if iteration > 15000 and iteration % opt.densification_interval == 0:
+            #     gaussians.prune_kappas(5)
+            
             # Densification
             if iteration < opt.densify_until_iter:
                 # try:
@@ -438,7 +465,7 @@ if __name__ == "__main__":
     parser.add_argument('--ip', type=str, default="127.0.0.1")
     parser.add_argument('--port', type=int, default=6009)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
-    parser.add_argument("--test_iterations", nargs="+", type=int, default=[7_000, 30_000])
+    parser.add_argument("--test_iterations", nargs="+", type=int, default=[7_000, 15_000, 20_000, 30_000])
     parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000, 30_000])
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[15002])

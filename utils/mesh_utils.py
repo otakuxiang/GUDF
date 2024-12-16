@@ -107,10 +107,26 @@ class GaussianExtractor(object):
             self.normals.append(normal.cpu())
             self.depth_normals.append(depth_normal.cpu())
         
-        self.rgbmaps = torch.stack(self.rgbmaps, dim=0)
-        self.depthmaps = torch.stack(self.depthmaps, dim=0)
-        self.alphamaps = torch.stack(self.alphamaps, dim=0)
-        self.depth_normals = torch.stack(self.depth_normals, dim=0)
+        # self.rgbmaps = torch.stack(self.rgbmaps, dim=0)
+        # self.depthmaps = torch.stack(self.depthmaps, dim=0)
+        # self.alphamaps = torch.stack(self.alphamaps, dim=0)
+        # self.depth_normals = torch.stack(self.depth_normals, dim=0)
+        self.estimate_bounding_sphere()
+        
+    
+    def estimate_bounding_sphere(self):
+        """
+        Estimate the bounding sphere given camera pose
+        """
+        from utils.render_utils import transform_poses_pca, focus_point_fn
+        torch.cuda.empty_cache()
+        c2ws = np.array([np.linalg.inv(np.asarray((cam.world_view_transform.T).cpu().numpy())) for cam in self.viewpoint_stack])
+        poses = c2ws[:,:3,:] @ np.diag([1, -1, -1, 1])
+        center = (focus_point_fn(poses))
+        self.radius = np.linalg.norm(c2ws[:,:3,3] - center, axis=-1).min()
+        self.center = torch.from_numpy(center).float().cuda()
+        print(f"The estimated bounding radius is {self.radius:.2f}")
+        print(f"Use at least {2.0 * self.radius:.2f} for depth_trunc")
 
     @torch.no_grad()
     def extract_mesh_bounded(self, voxel_size=0.004, sdf_trunc=0.02, depth_trunc=3, mask_backgrond=True):

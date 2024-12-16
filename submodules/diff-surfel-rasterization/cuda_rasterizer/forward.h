@@ -24,6 +24,7 @@ namespace FORWARD
 	void preprocess(int P, int D, int M,
 		const float* orig_points,
 		const glm::vec3* scales,
+		const float* kappas,
 		const float scale_modifier,
 		const glm::vec4* rotations,
 		const float* opacities,
@@ -46,6 +47,7 @@ namespace FORWARD
 		float* view2gaussians,
 		float* colors,
 		float4* normal_opacity,
+		float* max_alpha,
 		const dim3 grid,
 		uint32_t* tiles_touched,
 		bool prefiltered);
@@ -68,6 +70,7 @@ namespace FORWARD
 		const float* view2gaussians,
 		const float* depths,
 		const float4* normal_opacity,
+		const float* max_alpha,
 		const float lambda,
 		float* final_T,
 		uint32_t* n_contrib,

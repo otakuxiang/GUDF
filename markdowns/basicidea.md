@@ -83,7 +83,7 @@ $$
     T(t) &=  (1 + \exp(\kappa|\cos\theta|(t^* - t_n)))\frac{\exp(\kappa|\cos(\theta)|(t_n - t^* + t^* - t))}{1+\exp(\kappa|\cos\theta|(t^* - t))} &\\
     T(t) &=  (1 + \exp(\kappa|\cos\theta|(t^* - t_n)))\exp(\kappa|\cos(\theta)|(t_n - t^*))\frac{\exp(\kappa|\cos(\theta)|(t^* - t))}{1+\exp(\kappa\cos\theta|(t^* - t))} &\\
     T(t) &= \frac{1 + \exp(\kappa|\cos\theta|(t_n-t^*))}{1+\exp(\kappa|\cos\theta|(t- t^*))} &\\    
-    w(t) &= σ(t)T(t) = -T'(t) &\\
+    w(t) &= \sigma(t)T(t) = -T'(t) &\\
     \int_{t_n}^{t_f}w(t)dt &= -\int_{t_n}^{t_f}T'(t)dt &\\
     &= T(t_n) - T(t_f) = 1 - T(t_f)&\\
     d &= \int_{t_n}^{t_f} w(t)tdt= -\int_{t_n}^{t_f} T'(t)tdt =  - (T(t)t)|^{t_f}_{t_n} + \int_{t_n}^{t_f} T(t)dt &\\
@@ -232,6 +232,42 @@ $$
 \end{align}
 $$
 
+## depth distortion loss
+The depth distortion loss can be computed by:
+$$
+\begin{align}
+    L_d &= \sum_{i,j}\omega_i \omega_j|z_i - z_j| \\
+    \omega_i &= o_i\prod_{j=1}^{i-1}(1 - \alpha_j) \\
+    L_d &= \sum_{i=1}^{N-1}\sum_{j=0}^{i-1}\omega_i \omega_j(z_i - z_j)^2 \\
+    &= \sum_{i=1}^{N-1}\omega_i(z_i^2\sum_{j=0}^{i-1}\omega_j + \sum_{j=0}^{i-1}\omega_j z_j^2 -2z_i\sum_{j=0}^{i-1}\omega_j z_j)\\
+\end{align}
+$$
+For iteractive backpropagation, we show a small example:
+$$
+\begin{align}
+    L &= \omega_1(z_1^2\omega_0 + \omega_0 z_0^2 - 2z_1\omega_0 z_0) + \omega_2(z_2^2(\omega_1 + \omega_0) + (\omega_1 z_1^2 + \omega_0 z_0^2) - 2z_2(\omega_1 z_1+ \omega_0 z_0)) + &\\
+    &\omega_3(z_3^2(\omega_2 + \omega_1 + \omega_0) + (\omega_2 z_2^2 + \omega_1 z_1^2 + \omega_0 z_0^2) - 2z_3(\omega_2 z_2 + \omega_1 z_1 + \omega_0 z_0)) \\
+    \frac{\partial L}{\partial \omega_3} &= e_3 = (z_3^2(\omega_2 + \omega_1 + \omega_0) + (\omega_2 z_2^2 + \omega_1 z_1^2 + \omega_0 z_0^2) - 2z_3(\omega_2 z_2 + \omega_1 z_1 + \omega_0 z_0)) &\\
+    \frac{\partial L}{\partial \omega_2} &= e_2 + \omega_3 z_3^2 + \omega_3 z_2^2 - 2\omega_3 z_3 z_2 &\\
+    \frac{\partial L}{\partial \omega_1} &= e_1 + (\omega_2 z_2^2 + \omega_3 z_3^2) + \omega_2 z_1^2 + \omega_3 z_1^2 - 2\omega_3 z_3z_1 - 2\omega_2 z_2 z_1 &\\
+    \frac{\partial L}{\partial \omega_i} &= z_i^2\sum_{j=0}^{i-1}\omega_j+ \sum_{j=0}^{i-1}\omega_j z_j^2 -2z_i\sum_{j=0}^{i-1}\omega_j z_j +\sum_{j=i+1}^{N}\omega_j z_j^2 + z_i^2\sum_{j=i+1}^N\omega_j - 2z_i\sum_{j=i+1}^N\omega_j z_j  &\\
+    &= z_i^2(\sum_{j=i+1}^{N}\omega_j + \sum_{j=0}^{i-1}\omega_j) + (\sum_{j=0}^{i-1}\omega_j z_j^2 + \sum_{j=i+1}^{N}\omega_j z_j^2) -2z_i(\sum_{j=0}^{i-1}\omega_j z_j + \sum_{j=i+1}^{N}\omega_j z_j) &\\
+    \frac{\partial L}{\partial z_3} &= \omega_3(2z_3\sum_{j=0}^{2}\omega_j - 2\sum_{j=0}^{2}\omega_j z_j) &\\
+    \frac{\partial L}{\partial z_2} &= \omega_2(2z_2(\omega_1 + \omega_0) - 2(\omega_1z_1 + \omega_0z_0)) + 2\omega_3\omega_2z_2 - 2z_3\omega_3\omega_2 &\\
+    \frac{\partial L}{\partial z_1} &= \omega_1(2z_1\omega_0 - 2z_0\omega_0) + 2\omega_2\omega_1z_1 - 2z_2\omega_2\omega_1 + 2z_1\omega_1\omega_3 - 2z_3\omega_1\omega_3&\\
+    &= \omega_1(2z_1\omega_0 - 2z_0\omega_0) + 2z_1\omega_1(\omega_2 + \omega_3) -2\omega_1(\omega_2z_2 + \omega_3z_3) &\\
+    \frac{\partial L}{\partial z_i} &= 2\omega_i(z_i\sum_{j=0}^{i-1}\omega_j +  - \sum_{j=0}^{i-1}\omega_j z_j) + 2z_i\omega_i\sum_{j=i+1}^{N}\omega_j - 2\omega_i\sum_{j=i+1}^{N}\omega_j z_j&\\
+    &= 2\omega_i(z_i(\sum_{j=0}^{i-1}\omega_j+\sum_{j=i+1}^{N}\omega_j)  - (\sum_{j=0}^{i-1}\omega_j z_j + \sum_{j=i+1}^{N}\omega_j z_j))&\\
+    \frac{\partial \omega_i}{\partial o_i} &= T_i &\\
+    \frac{\partial \omega_i}{\partial \alpha_j} &= -o_i\prod_{k=0}^{j-1}(1-\alpha_k)\prod_{k=j+1}^{N}(1-\alpha_k) &\\ 
+    
+    \end{align}
+$$
+
+
+## Blending 2DGS and GUDF
+2DGS 
+
 ## TODO: 
 1. Assume the weight of each point is a gaussian distribution:
    $$
@@ -250,13 +286,22 @@ $$
    $$
 2. Suppose the SDF function is defined as a set of basis functions $B_x(x),B_y(y),B_z(z)$, assume the center is $(c_x,c_y,c_z)$ and the point is $(o_x + t d_x,o_y + t d_y,o_z + t d_z)$, then the SDF can be computed by:
 $$
-    f(t) = B_x(o_x + t d_x - c_x)B_y(o_y + t d_y - c_y) B_z(o_z + t d_z - c_z)
+    f(t) = B_x(o_x + t d_x)B_y(o_y + t d_y) B_z(o_z + t d_z)
 $$
 Assuming the basis functions are polynomials of degree $n$:
 $$
 \begin{align}
-&B_x(x) = \sum_{i=0}^{n}a_0^ix^i,\; B_y(y) = \sum_{i=0}^{n}a_1^iy^i,\; B_z(z) = \sum_{i=0}^{n}a_2^iz^i  \\
-&h = f(t), \; \frac{\partial h}{\partial t} = 
+&B_x(x) = \sum_{i=0}^{n}a_0^ix^i,\; B_y(y) = \sum_{i=0}^{n}a_1^iy^i,\; B_z(z) = \sum_{i=0}^{n}a_2^iz^i  &\\
+&y = f(t), \\
+&\\ 
+\end{align}
+
+$$
+suppose the derivative of the SDF is $\frac{\partial f}{\partial t} = F$
+$$
+\begin{align}
+\int_{f(r(t_n))}^{f(r(t_f))}\frac{1}{F}\frac{1}{1+e^{-\kappa y}}dy &= 
 \end{align}
 $$
+
 

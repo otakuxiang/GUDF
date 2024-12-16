@@ -38,7 +38,8 @@ class GaussianModel:
         self.inverse_opacity_activation = inverse_sigmoid
         self.rotation_activation = torch.nn.functional.normalize
         def kappa_activation(kappa):
-            return 100. * torch.sigmoid(kappa)
+            # return 300. * torch.sigmoid(kappa)
+            return torch.relu(kappa)
         self.kappa_activation = kappa_activation
 
     def __init__(self, sh_degree : int):
@@ -57,6 +58,7 @@ class GaussianModel:
         self.optimizer = None
         self.percent_dense = 0
         self.spatial_lr_scale = 0
+        self.enable_opacity = True
         self.setup_functions()
 
     def capture(self):
@@ -93,6 +95,11 @@ class GaussianModel:
         self.denom = denom
         self.optimizer.load_state_dict(opt_dict)
 
+    def disable_opacities(self):
+        self.enable_opacity = False
+        self._opacity = inverse_sigmoid(torch.ones_like(self._opacity)*0.9999)
+    
+    
     def get_kappas_grad(self):
         return self._kappas.grad
     @property
@@ -132,15 +139,19 @@ class GaussianModel:
         return self._opacity.grad
     @property
     def get_opacity(self):
-        return self.opacity_activation(self._opacity)
-    
+        if self.enable_opacity:
+            return self.opacity_activation(self._opacity)
+        else:
+            with torch.no_grad():
+                return self.opacity_activation(self._opacity)
+            
     def get_covariance(self, scaling_modifier = 1):
         return self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation)
 
     def oneupSHdegree(self):
         if self.active_sh_degree < self.max_sh_degree:
             self.active_sh_degree += 1
-
+      
     def create_from_pcd(self, pcd : BasicPointCloud, spatial_lr_scale : float):
         self.spatial_lr_scale = spatial_lr_scale
         fused_point_cloud = torch.tensor(np.asarray(pcd.points)).float().cuda()
@@ -156,8 +167,7 @@ class GaussianModel:
         rots = torch.rand((fused_point_cloud.shape[0], 4), device="cuda")
 
         opacities = self.inverse_opacity_activation(0.4 * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda"))
-        import math
-        kappas = inverse_sigmoid(0.4 * torch.ones_like(opacities))
+        kappas = torch.ones_like(opacities) * 50.0
         self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
         self._features_dc = nn.Parameter(features[:,:,0:1].transpose(1, 2).contiguous().requires_grad_(True))
         self._features_rest = nn.Parameter(features[:,:,1:].transpose(1, 2).contiguous().requires_grad_(True))
@@ -168,6 +178,8 @@ class GaussianModel:
         
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
 
+    
+    
     def training_setup(self, training_args):
         self.percent_dense = training_args.percent_dense
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
@@ -279,6 +291,7 @@ class GaussianModel:
         for idx, attr_name in enumerate(rot_names):
             rots[:, idx] = np.asarray(plydata.elements[0][attr_name])
         kappas = np.asarray(plydata.elements[0]['kappas'])[..., np.newaxis]
+
         self._xyz = nn.Parameter(torch.tensor(xyz, dtype=torch.float, device="cuda").requires_grad_(True))
         self._features_dc = nn.Parameter(torch.tensor(features_dc, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
         self._features_rest = nn.Parameter(torch.tensor(features_extra, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
@@ -286,6 +299,7 @@ class GaussianModel:
         self._scaling = nn.Parameter(torch.tensor(scales, dtype=torch.float, device="cuda").requires_grad_(True))
         self._rotation = nn.Parameter(torch.tensor(rots, dtype=torch.float, device="cuda").requires_grad_(True))
         self._kappas = nn.Parameter(torch.tensor(kappas, dtype=torch.float, device="cuda").requires_grad_(True))
+
         self.active_sh_degree = self.max_sh_degree
 
     def replace_tensor_to_optimizer(self, tensor, name):
@@ -332,7 +346,6 @@ class GaussianModel:
         self._scaling = optimizable_tensors["scaling"]
         self._rotation = optimizable_tensors["rotation"]
         self._kappas = optimizable_tensors["kappas"] 
-
         self.xyz_gradient_accum = self.xyz_gradient_accum[valid_points_mask]
 
         self.denom = self.denom[valid_points_mask]
@@ -390,7 +403,7 @@ class GaussianModel:
         padded_grad[:grads.shape[0]] = grads.squeeze()
         selected_pts_mask = torch.where(padded_grad >= grad_threshold, True, False)
         selected_pts_mask = torch.logical_and(selected_pts_mask,
-                                              torch.max(self.get_scaling, dim=1).values > self.percent_dense*scene_extent)
+                                              torch.max(self.get_scaling[...,:2], dim=1).values > self.percent_dense*scene_extent)
         # breakpoint()
         stds = self.get_scaling[selected_pts_mask][:,:2].repeat(N,1)
         stds = torch.cat([stds, 0 * torch.ones_like(stds[:,:1])], dim=-1)
@@ -414,7 +427,7 @@ class GaussianModel:
         # Extract points that satisfy the gradient condition
         selected_pts_mask = torch.where(torch.norm(grads, dim=-1) >= grad_threshold, True, False)
         selected_pts_mask = torch.logical_and(selected_pts_mask,
-                                              torch.max(self.get_scaling, dim=1).values <= self.percent_dense*scene_extent)
+                                              torch.max(self.get_scaling[...,:2], dim=1).values <= self.percent_dense*scene_extent)
         # breakpoint()
         
         new_xyz = self._xyz[selected_pts_mask]
@@ -435,15 +448,62 @@ class GaussianModel:
 
         prune_mask = (self.get_opacity < min_opacity).squeeze()
         if max_screen_size:
+            # breakpoint()
             big_points_vs = self.max_radii2D > max_screen_size
-            big_points_ws = self.get_scaling.max(dim=1).values > 0.1 * extent
+            # print(0.1 * extent)
+            big_points_ws = self.get_scaling[...,:2].max(dim=1).values > 0.1 * extent
+            # small_kappa = (self.get_kappas < 1).squeeze()
             prune_mask = torch.logical_or(torch.logical_or(prune_mask, big_points_vs), big_points_ws)
+            # prune_mask = torch.logical_or(prune_mask, small_kappa)
+            # if prune_mask.sum() > 10000:
+            #     print("big_points_vs: %d, big_points_ws: %d small_opacity: %d" % (big_points_vs.sum().item(), big_points_ws.sum().item(), (self.get_opacity < min_opacity).sum().item()))
+            #     breakpoint()
         self.prune_points(prune_mask)
-
+        # self.prune_kappas(1) 
         torch.cuda.empty_cache()
 
+    def prune_kappas(self,min_kappa):
+        prune_mask = (self.get_kappas < min_kappa).squeeze()
+        self.prune_points(prune_mask)
+    
+    
+    
     def add_densification_stats(self, viewspace_point_tensor, update_filter):
         # breakpoint()
-        # print(torch.norm(viewspace_point_tensor.grad[update_filter], dim=-1, keepdim=True).mean())
+        # norm = torch.norm(viewspace_point_tensor.grad[update_filter], dim=-1, keepdim=True)
+        # print(update_filter.sum())
         self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter], dim=-1, keepdim=True)
         self.denom[update_filter] += 1
+    def get_points_from_depth(self, fov_camera, depth, scale=1):
+        st = int(max(int(scale/2)-1,0))
+        depth_view = depth.squeeze()[st::scale,st::scale]
+        rays_d = fov_camera.get_rays(scale=scale)
+        depth_view = depth_view[:rays_d.shape[0], :rays_d.shape[1]]
+        pts = (rays_d * depth_view[..., None]).reshape(-1,3)
+        R = torch.tensor(fov_camera.R).float().cuda()
+        T = torch.tensor(fov_camera.T).float().cuda()
+        pts = (pts-T)@R.transpose(-1,-2)
+        return pts
+    
+    def get_points_depth_in_depth_map(self, fov_camera, depth, points_in_camera_space, scale=1):
+        st = max(int(scale/2)-1,0)
+        depth_view = depth[None,:,st::scale,st::scale]
+        W, H = int(fov_camera.image_width/scale), int(fov_camera.image_height/scale)
+        depth_view = depth_view[:H, :W]
+        pts_projections = torch.stack(
+                        [points_in_camera_space[:,0] * fov_camera.Fx / points_in_camera_space[:,2] + fov_camera.Cx,
+                         points_in_camera_space[:,1] * fov_camera.Fy / points_in_camera_space[:,2] + fov_camera.Cy], -1).float()/scale
+        mask = (pts_projections[:, 0] > 0) & (pts_projections[:, 0] < W) &\
+               (pts_projections[:, 1] > 0) & (pts_projections[:, 1] < H) & (points_in_camera_space[:,2] > 0.1)
+
+        pts_projections[..., 0] /= ((W - 1) / 2)
+        pts_projections[..., 1] /= ((H - 1) / 2)
+        pts_projections -= 1
+        pts_projections = pts_projections.view(1, -1, 1, 2)
+        map_z = torch.nn.functional.grid_sample(input=depth_view,
+                                                grid=pts_projections,
+                                                mode='bilinear',
+                                                padding_mode='border',
+                                                align_corners=True
+                                                )[0, :, :, 0]
+        return map_z, mask

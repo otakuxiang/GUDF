@@ -94,6 +94,7 @@ class _RasterizeGaussians(torch.autograd.Function):
                 print("\nAn error occured in forward. Please forward snapshot_fw.dump for debugging.")
                 raise ex
         else:
+            # cpu_args = cpu_deep_copy_tuple(args)
             num_rendered, color, depth, radii, geomBuffer, binningBuffer, imgBuffer = _C.rasterize_gaussians(*args)
 
         # Keep relevant tensors for backward
@@ -138,10 +139,8 @@ class _RasterizeGaussians(torch.autograd.Function):
                 raster_settings.debug)
 
         # Compute gradients for relevant tensors by invoking backward method
-        if kappas.isnan().any() or kappas.isinf().any():
-            print("NaN detected in kappas.")
-            # torch.save(cpu_args, "./debug/snapshot_bw.dump")
-        if True:
+
+        if raster_settings.debug:
             cpu_args = cpu_deep_copy_tuple(args) # Copy them before they can be corrupted
             try:
                 grad_means2D, grad_colors_precomp, grad_opacities, grad_means3D, grad_cov3Ds_precomp, grad_sh, grad_scales, grad_rotations, grad_kappas = _C.rasterize_gaussians_backward(*args)
@@ -150,12 +149,21 @@ class _RasterizeGaussians(torch.autograd.Function):
                 torch.save(cpu_args, "snapshot_bw.dump")
                 print("\nAn error occured in backward. Writing snapshot_bw.dump for debugging.\n")
                 raise ex
-            if grad_kappas.isnan().any() or grad_kappas.isinf().any():
-                torch.save(cpu_args, "./debug/snapshot_bw.dump")
-                print("\nNaN detected in grad_scales. Writing snapshot_bw.dump for debugging.\n")
-                exit()
+            # if grad_kappas.isnan().any() or grad_kappas.isinf().any():
+            # torch.save(cpu_args, "./snapshot_bw.dump")
+            # print("\nNaN detected in grad_kappas. Writing snapshot_bw.dump for debugging.\n")
+            # exit()
         else:
+            # cpu_args = cpu_deep_copy_tuple(args) # Copy them before they can be corrupted
+            
             grad_means2D, grad_colors_precomp, grad_opacities, grad_means3D, grad_cov3Ds_precomp, grad_sh, grad_scales, grad_rotations, grad_kappas = _C.rasterize_gaussians_backward(*args)
+            # if grad_scales.isnan().any() or grad_scales.isinf().any():
+            #     print("NaN detected in scales backward.")
+            #     torch.save(cpu_args, "./debug/snapshot_bw.dump")
+            #     exit()
+            # torch.save(cpu_args, "./snapshot_bw.dump")
+            # exit()
+            
 
         
         grads = (

@@ -103,7 +103,7 @@ class OptimizationParams(ParamGroup):
         self.use_multi_view_trim = True
         self.multi_view_ncc_weight = 0.15
         self.multi_view_geo_weight = 0.03
-        self.multi_view_weight_from_iter = 7000
+        self.multi_view_weight_from_iter = 30_000
         self.multi_view_patch_size = 3
         self.multi_view_sample_num = 102400
         self.multi_view_pixel_noise_th = 1.0

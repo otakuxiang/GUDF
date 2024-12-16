@@ -154,7 +154,21 @@ class MiniCam:
         self.full_proj_transform = full_proj_transform
         view_inv = torch.inverse(self.world_view_transform)
         self.camera_center = view_inv[3][:3]
-
+        self.Cx = 0.5 * self.image_width
+        self.Cy = 0.5 * self.image_height
+        self.Fx = fov2focal(fovx, self.image_width)
+        self.Fy = fov2focal(fovy, self.image_height)
+        
+    def get_rays(self, scale=1.0):
+        W, H = int(self.image_width/scale), int(self.image_height/scale)
+        ix, iy = torch.meshgrid(
+            torch.arange(W), torch.arange(H), indexing='xy')
+        rays_d = torch.stack(
+                    [(ix-self.Cx/scale) / self.Fx * scale,
+                    (iy-self.Cy/scale) / self.Fy * scale,
+                    torch.ones_like(ix)], -1).float().cuda()
+        return rays_d
+    
 def sample_cam(cam_l: Camera, cam_r: Camera):
     cam = copy.copy(cam_l)
 

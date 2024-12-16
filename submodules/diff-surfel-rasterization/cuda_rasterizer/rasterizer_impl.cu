@@ -162,6 +162,7 @@ CudaRasterizer::GeometryState CudaRasterizer::GeometryState::fromChunk(char*& ch
 	obtain(chunk, geom.transMat, P * 9, 128);
 	obtain(chunk, geom.view2gaussian, P * 16, 128); // could be 12
 	obtain(chunk, geom.normal_opacity, P, 128);
+	obtain(chunk, geom.max_alpha, P, 128);
 	obtain(chunk, geom.rgb, P * 3, 128);
 	obtain(chunk, geom.tiles_touched, P, 128);
 	cub::DeviceScan::InclusiveSum(nullptr, geom.scan_size, geom.tiles_touched, geom.tiles_touched, P);
@@ -252,6 +253,7 @@ int CudaRasterizer::Rasterizer::forward(
 		P, D, M,
 		means3D,
 		(glm::vec3*)scales,
+		kappas,
 		scale_modifier,
 		(glm::vec4*)rotations,
 		opacities,
@@ -271,6 +273,7 @@ int CudaRasterizer::Rasterizer::forward(
 		geomState.view2gaussian,
 		geomState.rgb,
 		geomState.normal_opacity,
+		geomState.max_alpha,
 		tile_grid,
 		geomState.tiles_touched,
 		prefiltered
@@ -319,7 +322,7 @@ int CudaRasterizer::Rasterizer::forward(
 			num_rendered,
 			binningState.point_list_keys,
 			imgState.ranges);
-	CHECK_CUDA(, debug)
+	// CHECK_CUDA(, debug)
 
 	// Let each tile blend its range of Gaussians independently in parallel
 	const float* feature_ptr = colors_precomp != nullptr ? colors_precomp : geomState.rgb;
@@ -343,6 +346,7 @@ int CudaRasterizer::Rasterizer::forward(
 		geomState.view2gaussian,
 		geomState.depths,
 		geomState.normal_opacity,
+		geomState.max_alpha,
 		lambda,
 		imgState.accum_alpha,
 		imgState.n_contrib,
@@ -427,6 +431,7 @@ void CudaRasterizer::Rasterizer::backward(
 		kappas,
 		viewmatrix,
 		geomState.normal_opacity,
+		geomState.max_alpha,
 		color_ptr,
 		transMat_ptr,
 		geomState.view2gaussian,

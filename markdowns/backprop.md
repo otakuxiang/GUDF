@@ -110,8 +110,21 @@ $$
 \frac{\partial E}{\partial \kappa} &=  (G+H)\frac{\partial F}{\partial \kappa} + F(\frac{\partial G}{\partial \kappa} + \frac{\partial H}{\partial \kappa})  &\\
 \frac{\partial F}{\partial \kappa} &= \frac{1}{\kappa|\cos\theta|}\frac{\partial C}{ \partial \kappa} - \frac{C}{\kappa^2|\cos\theta|} &\\
 \frac{\partial G}{\partial \kappa} &= |\cos\theta|(t_f-t_n) &\\
-\frac{\partial H}{\partial \kappa} &= \frac{1}{C}\frac{\partial C}{\partial \kappa} - \frac{1}{B}\frac{\partial B}{\partial \kappa}&\\
+\frac{\partial H}{\partial \kappa} &= \frac{1}{C}\frac{\partial C}{\partial \kappa} - \frac{1}{B}\frac{\partial B}{\partial \kappa} &\\
+
 \end{align}
+$$
+$$
+\begin{align}
+    &\frac{\partial E}{\partial \kappa} = 
+(-\kappa f(r(t_n))(e^{\kappa f(r(t_f))} + 1)(|\cos\theta|\kappa(t_f - t_n) - \log(e^{-\kappa f(r(t_f))} + 1) + \log(e^{-\kappa f(r(t_n))} + 1)) &\\
+&+ |\cos\theta|\kappa((t^* - t_f)(e^{\kappa f(r(t_n))} + 1) - (t^* - t_n)(e^{\kappa f(r(t_f))} + 1) + (t_f - t_n)(e^{\kappa f(r(t_f))} + 1)(e^{\kappa f(r(t_n))} + 1)) &\\
+&- (e^{\kappa f(r(t_f))} + 1)(e^{\kappa f(r(t_n))} + 1)(|\cos\theta|\kappa(t_f - t_n) - \log(e^{-\kappa f(r(t_f))} + 1) + \log(e^{-\kappa f(r(t_n))} + 1)))&\\
+&e^{-\kappa f(r(t_n))}/(|\cos\theta|\kappa^2(e^{\kappa f(r(t_f))} + 1))
+\end{align}
+
+
+
 $$
 Also, consider the nan problem, we compute the backpropagation in log space:
 $$
@@ -166,9 +179,9 @@ $$
 Notice that $E = \int_{t_n}^{t_f}T(t)dt$, so we can directly compute the backpropagation of $E$ by integrating equation:
 $$
 \begin{align}
-\frac{\partial E}{\partial t_f} &= T(t_f) &\\
-\frac{\partial E}{\partial t_n} &= -T(t_n) = -1 &\\
-\frac{\partial D}{\partial t_f} &=  - t_f\frac{\partial T}{\partial t_f} ,\;\;
+&\frac{\partial E}{\partial t_f} = (\exp(|\cos\theta|\kappa t^*) + \exp(|\cos\theta|\kappa t_n))/(\exp(|\cos\theta|\kappa t^*) + \exp(|\cos\theta|\kappa t_f)) &\\
+&\frac{\partial E}{\partial t_n} = (|\cos\theta|\kappa(t_f - t_n) + \ln T)e^{-\kappa f(r(t_n))} -1  &\\
+&\frac{\partial D}{\partial t_f} =  - t_f\frac{\partial T}{\partial t_f} ,\;\;
 \frac{\partial D}{\partial t_n} =  - t_f\frac{\partial T}{\partial t_n} &\\ 
 \end{align}
 $$
