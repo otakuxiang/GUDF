@@ -257,7 +257,7 @@ __device__ float computeOpacityGUDF(const glm::vec3 &p_world, const float *norma
 	dT_dscale[0] = dTdrg[0] * drg_dscale[0] + dTdog[0] * dog_dscale[0];
 	dT_dscale[1] = dTdrg[1] * drg_dscale[1] + dTdog[1] * dog_dscale[1];
 	dT_dscale[2] = dTdrg[2] * drg_dscale[2] + dTdog[2] * dog_dscale[2];
-	
+
 	dD_dscale[0] = dDdrg[0] * drg_dscale[0] + dDdog[0] * dog_dscale[0];
 	dD_dscale[1] = dDdrg[1] * drg_dscale[1] + dDdog[1] * dog_dscale[1];
 	dD_dscale[2] = dDdrg[2] * drg_dscale[2] + dDdog[2] * dog_dscale[2];
@@ -1073,7 +1073,7 @@ renderCUDA_GUDF(
 			// }
 			
 			float alpha = min(0.99f, nor_o.w * UDF_opacity );
-			float max_alpha = collected_malphas[j];
+			// float max_alpha = collected_malphas[j];
 			// alpha = alpha / max_alpha;
 		
 			// const float alpha = min(0.99f, UDF_opacity);
@@ -1083,7 +1083,7 @@ renderCUDA_GUDF(
 				continue;
 
 			float tmp_T = T;
-			T = T / (1.f - alpha + 1e-8);
+			T = T / (1.f - alpha);
 
 			const float dchannel_dcolor = alpha * T;
 
@@ -1107,56 +1107,56 @@ renderCUDA_GUDF(
 				atomicAdd(&(dL_dcolors[global_id * C + ch]), dchannel_dcolor * dL_dchannel);
 			}
 
-
+			float dL_do = 0.0f;
 			float dL_dz = 0.0f;
 			float dL_dweight = 0;
+			float dL_dT = 0.f;
+			float depth_u = depth / UDF_opacity;
 #if RENDER_AXUTILITY
-			float depth_u = depth;
 			float m_d = (FAR_PLANE * depth_u - FAR_PLANE * NEAR_PLANE) / ((FAR_PLANE - NEAR_PLANE) * depth_u );
 			// float m_d = depth;
-			// if (isnan(m_d) || isinf(m_d)){
-			// 	printf("depth: %f, UDF_opacity: %f ,max_alpha: %f\n", depth,UDF_opacity,max_alpha);
-			// }
+
 			float dmd_dd = (FAR_PLANE * NEAR_PLANE) / ((FAR_PLANE - NEAR_PLANE) * depth_u * depth_u);
 			// float dmd_dd = 1;
 			
 			if (contributor == median_contributor-1) {
-				dL_dz += dL_dmedian_depth;
+				dL_dz += dL_dmedian_depth / UDF_opacity;
+				dL_dT += dL_dmedian_depth * depth / (UDF_opacity * UDF_opacity);
 				dL_dweight += dL_dmax_dweight;
 			}
-			float A = final_A - nor_o.w * T;
-			float D = final_D - m_d * nor_o.w * T;
-			float D2 = final_D2 - m_d * m_d * nor_o.w * T; 
+
 #if DETACH_WEIGHT 
 			// if not detached weight, sometimes 
 			// it will bia toward creating extragated 2D Gaussians near front
 			dL_dweight += 0;
 #else
-			dL_dweight += (D2 + m_d * m_d * A - 2 * m_d * D) * dL_dreg;
+			dL_dweight += (final_D2 + m_d * m_d * final_A - 2 * m_d * final_D) * dL_dreg;
 #endif
-			dL_dalpha -= nor_o.w * last_dL_dT * dL_dweight;
-			// propagate the current weight W_{i} to next weight W_{i-1}
-			last_dL_dT = (1 - alpha) * last_dL_dT;
-			atomicAdd(&dL_dopacity[global_id], T * dL_dweight);
-			float dL_dmd = 2.0f * (T * nor_o.w) * (m_d * A - D) * dL_dreg;
-			dL_dz += dL_dmd * dmd_dd;
-			
+			float dd_dLdalpha = T * (dL_dweight - last_dL_dT);
+			// // propagate the current weight W_{i} to next weight W_{i-1}
+			// bool flag = isnan(last_dL_dT) || isinf(last_dL_dT);
+			// float tmp = last_dL_dT;
+			last_dL_dT = dL_dweight * alpha + (1 - alpha) * last_dL_dT;
+			float dL_dmd = 2.0f * (T * alpha) * (m_d * final_A - final_D) * dL_dreg;
+			dL_dz += dL_dmd * dmd_dd / UDF_opacity;
+			float dd_dLdT = dL_dmd * dmd_dd * depth / (UDF_opacity * UDF_opacity);
 			// Propagate gradients w.r.t ray-splat depths
 			accum_depth_rec = last_opacity * last_depth + (1.f - last_alpha) * accum_depth_rec;
 			last_depth = depth;
 			dL_dalpha += - accum_depth_rec * dL_ddepth;
-			atomicAdd(&dL_dopacity[global_id], depth * T * dL_ddepth);
+			// atomicAdd(&dL_dopacity[global_id], depth * T * dL_ddepth);
+			dL_do += depth * T * dL_ddepth;
 
 			// Propagate gradients w.r.t. color ray-splat alphas
 			accum_alpha_rec = last_alpha * 1.0 + (1.f - last_alpha) * accum_alpha_rec;
 			dL_dalpha += (1 - accum_alpha_rec) * dL_daccum;
-
+			float dL_dnormal[3] = {0.,0.,0.};
 			// Propagate gradients to per-Gaussian normals
 			for (int ch = 0; ch < 3; ch++) {
 				accum_normal_rec[ch] = last_alpha * last_normal[ch] + (1.f - last_alpha) * accum_normal_rec[ch];
 				last_normal[ch] = normal[ch];
 				dL_dalpha += (normal[ch] - accum_normal_rec[ch]) * dL_dnormal2D[ch];
-				atomicAdd((&dL_dnormal3D[global_id * 3 + ch]), alpha * T * dL_dnormal2D[ch]);
+				dL_dnormal[ch] += alpha * T * dL_dnormal2D[ch];
 			}
 #endif
 
@@ -1172,7 +1172,7 @@ renderCUDA_GUDF(
 
 			dL_dalpha += (-T_final / (1.f - alpha)) * bg_dot_dpixel;
 
-			float dL_dT = -nor_o.w * dL_dalpha;
+			dL_dT += -nor_o.w * dL_dalpha;
 			// float dL_dT = -nor_o.w * dL_dalpha / max_alpha;
 			
 			// float dL_dmax_alpha = - dL_dalpha * alpha / max_alpha;
@@ -1186,54 +1186,33 @@ renderCUDA_GUDF(
 			// }
 			// compute dL_dkappa dalpha_dT = -nor_o.w
 
-
-			atomicAdd(&dL_dkappas[global_id], dL_dT * dT_dkappa);
-			// compute dL_dmean3D dalpha_dT = -nor_o.w 
-			atomicAdd((&dL_dnormal3D[global_id * 3]), dL_dT * dT_dnormal3D.x);
-			atomicAdd((&dL_dnormal3D[global_id * 3 + 1]), dL_dT * dT_dnormal3D.y);
-			atomicAdd((&dL_dnormal3D[global_id * 3 + 2]), dL_dT * dT_dnormal3D.z);
-			for (int ii = 0; ii < 16; ii++) 
-			{
-				atomicAdd(&(dL_dview2gaussians[global_id * 16 + ii]), dL_dT * dT_dV2G[ii]);
-			}
-			atomicAdd(&dL_dscale[global_id][0], dL_dT * dT_dscale[0]);
-			atomicAdd(&dL_dscale[global_id][1], dL_dT * dT_dscale[1]);
-			atomicAdd(&dL_dscale[global_id][2], dL_dT * dT_dscale[2]);
-		// if (isnan(dL_dscales[idx][0]) || isnan(dL_dscales[idx][1]) || isinf(dL_dscales[idx][0]) || isinf(dL_dscales[idx][1])) printf("id: %d \n",idx);
-
-			
-
-			// Update gradients w.r.t. opacity of the Gaussian
-			atomicAdd(&(dL_dopacity[global_id]), alpha / (nor_o.w + 1e-5) * dL_dalpha);
-			// if(global_id == 181){ 
-			// 	printf("dL_dopacity[global_id] is nan or inf: %f\n", dL_dopacity[global_id]);
-			// 	printf("nor_o.w: %f\n", nor_o.w);
-			// 	printf("alpha / (nor_o.w + 1e-5): %f\n", alpha / (nor_o.w + 1e-5));
-			// 	printf("dL_dalpha: %f\n", dL_dalpha);
-			// }
-			
-			// backprop depth gradient
 #if RENDER_AXUTILITY
 			dL_dz += nor_o.w * T * dL_ddepth; 
 #endif	
-			atomicAdd(&dL_dkappas[global_id], dL_dz * dD_dkappa);
+			atomicAdd(&dL_dscale[global_id][0], dL_dT * dT_dscale[0] + dL_dz * dD_dscale[0]);
+			atomicAdd(&dL_dscale[global_id][1], dL_dT * dT_dscale[1] + dL_dz * dD_dscale[1]);
+			atomicAdd(&dL_dscale[global_id][2], dL_dT * dT_dscale[2] + dL_dz * dD_dscale[2]);
+			dL_dT += dd_dLdT - nor_o.w * dd_dLdalpha; 
+			atomicAdd(&dL_dkappas[global_id], dL_dT * dT_dkappa + dL_dz * dD_dkappa);
+			// compute dL_dmean3D dalpha_dT = -nor_o.w 
+			dL_dnormal[0] += dL_dT * dT_dnormal3D.x + dL_dz * dD_dnormal3D.x;
+			dL_dnormal[1] += dL_dT * dT_dnormal3D.y + dL_dz * dD_dnormal3D.y;
+			dL_dnormal[2] += dL_dT * dT_dnormal3D.z + dL_dz * dD_dnormal3D.z;
+			atomicAdd((&dL_dnormal3D[global_id * 3]), dL_dnormal[0]);
+			atomicAdd((&dL_dnormal3D[global_id * 3 + 1]), dL_dnormal[1]);
+			atomicAdd((&dL_dnormal3D[global_id * 3 + 2]), dL_dnormal[2]);
 			for (int ii = 0; ii < 16; ii++) 
-			{
-				atomicAdd(&(dL_dview2gaussians[global_id * 16 + ii]), dL_dz * dD_dV2G[ii]);
+			{	
+				atomicAdd(&(dL_dview2gaussians[global_id * 16 + ii]), dL_dT * dT_dV2G[ii]
+					+dL_dz * dD_dV2G[ii]);
 			}
-			atomicAdd(&dL_dscale[global_id][0], dL_dz * dD_dscale[0]);
-			atomicAdd(&dL_dscale[global_id][1], dL_dz * dD_dscale[1]);
-			atomicAdd(&dL_dscale[global_id][2], dL_dz * dD_dscale[2]);
 
-			// 	// printf("\n", );
-			// 	printf("dT_dscale: %f %f %f dL_dT: %f dD_dscale: %f %f %f dL_dz: %f \n",dL_dT * dT_dscale[0], dL_dT * dT_dscale[1], dL_dT * dT_dscale[2], dL_dT,
-			// 		dL_dz * dD_dscale[0], dL_dz * dD_dscale[1], dL_dz * dD_dscale[2], dL_dz);
-			// 	// printf("dL_dscale: %f %f %f\n", dL_dscale[global_id][0], dL_dscale[global_id][1], dL_dscale[global_id][2]);
-			// // 	printf("nor_o.w dL_dalpha: %f %f\n", nor_o.w, dL_dalpha);
-			// }
-			atomicAdd((&dL_dnormal3D[global_id * 3]), dL_dz * dD_dnormal3D.x);
-			atomicAdd((&dL_dnormal3D[global_id * 3 + 1]), dL_dz * dD_dnormal3D.y);
-			atomicAdd((&dL_dnormal3D[global_id * 3 + 2]), dL_dz * dD_dnormal3D.z);
+
+
+			// Update gradients w.r.t. opacity of the Gaussian
+			dL_do += alpha / (nor_o.w + 1e-5) * dL_dalpha;
+			atomicAdd(&(dL_dopacity[global_id]), dL_do);
+
 		}
 	}
 }

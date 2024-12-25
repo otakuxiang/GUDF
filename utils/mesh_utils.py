@@ -158,7 +158,11 @@ class GaussianExtractor(object):
             # if we have mask provided, use it
             # if mask_backgrond and (self.viewpoint_stack[i].mask is not None):
             #     depth[(self.viewpoint_stack[i].mask < 0.5).unsqueeze(0)] = 0
+            if mask_backgrond and (self.viewpoint_stack[i].gt_alpha_mask is not None):
+                # breakpoint()
+                depth[(self.viewpoint_stack[i].gt_alpha_mask < 0.5)] = 0
 
+            # depth = depth.clamp(0, depth_trunc)
             # make open3d rgbd
             rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
                 o3d.geometry.Image(np.asarray(rgb.permute(1,2,0).cpu().numpy() * 255, order="C", dtype=np.uint8)),

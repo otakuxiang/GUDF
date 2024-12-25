@@ -32,7 +32,7 @@
 // distortion helper macros
 #define BACKFACE_CULL 1
 #define DUAL_VISIABLE 1
-#define NEAR_PLANE 0.2
+#define NEAR_PLANE 0.1
 #define FAR_PLANE 100.0
 #define DETACH_WEIGHT 0
 

@@ -41,16 +41,20 @@ def loadCam(args, id, cam_info, resolution_scale):
 
 
     
-    sys.stdout.write('\r')
-    sys.stdout.write("load camera {}".format(id))
-    sys.stdout.flush()
+    if len(cam_info.image.split()) > 3:
+        import torch
+        resized_image_rgb = torch.cat([PILtoTorch(im, resolution) for im in cam_info.image.split()[:3]], dim=0)
+        loaded_mask = PILtoTorch(cam_info.image.split()[3], resolution)
+        gt_image = resized_image_rgb
+    else:
+        resized_image_rgb = PILtoTorch(cam_info.image, resolution)
+        loaded_mask = None
+        gt_image = resized_image_rgb
 
     return Camera(colmap_id=cam_info.uid, R=cam_info.R, T=cam_info.T, 
                   FoVx=cam_info.FovX, FoVy=cam_info.FovY,
-                  image_width=resolution[0], image_height=resolution[1],
-                  image_path=cam_info.image_path,
                   image_name=cam_info.image_name, uid=id, 
-                  preload_img=args.preload_img, 
+                  image=gt_image, gt_alpha_mask=loaded_mask,
                   ncc_scale=args.ncc_scale,
                   data_device=args.data_device)
 

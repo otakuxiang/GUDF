@@ -18,6 +18,7 @@ from PIL import Image
 from utils.general_utils import PILtoTorch
 import os, cv2
 import torch.nn.functional as F
+from torchvision import transforms
 
 def dilate(bin_img, ksize=6):
     pad = (ksize - 1) // 2
@@ -31,9 +32,9 @@ def erode(bin_img, ksize=12):
 
 class Camera(nn.Module):
     def __init__(self, colmap_id, R, T, FoVx, FoVy,
-                 image_width, image_height,
-                 image_path, image_name, uid,
-                 trans=np.array([0.0, 0.0, 0.0]), scale=1.0, 
+                image, gt_alpha_mask,
+                image_name, uid,
+                trans=np.array([0.0, 0.0, 0.0]), scale=1.0, 
                  ncc_scale=1.0,
                  preload_img=True, data_device = "cuda"
                  ):
@@ -48,7 +49,6 @@ class Camera(nn.Module):
         self.FoVx = FoVx
         self.FoVy = FoVy
         self.image_name = image_name
-        self.image_path = image_path
 
         try:
             self.data_device = torch.device(data_device)
@@ -57,32 +57,24 @@ class Camera(nn.Module):
             print(f"[Warning] Custom device {data_device} failed, fallback to default cuda device" )
             self.data_device = torch.device("cuda")
 
-        self.original_image, self.image_gray, self.mask = None, None, None
-        self.preload_img = preload_img
+        self.original_image = image.clamp(0.0, 1.0).to(self.data_device)
+        self.image_width = self.original_image.shape[2]
+        self.image_height = self.original_image.shape[1]
+
+        if gt_alpha_mask is not None:
+            # self.original_image *= gt_alpha_mask.to(self.data_device)
+            self.gt_alpha_mask = gt_alpha_mask.to(self.data_device)
+        else:
+            self.original_image *= torch.ones((1, self.image_height, self.image_width), device=self.data_device)
+            self.gt_alpha_mask = None
         self.ncc_scale = ncc_scale
-        if self.preload_img:
-            image = Image.open(self.image_path)
-            resized_image = image.resize((image_width, image_height))
-            resized_image_rgb = PILtoTorch(resized_image)
-            if ncc_scale != 1.0:
-                resized_image = image.resize((int(image_width/ncc_scale), int(image_height/ncc_scale)))
-            resized_image_gray = resized_image.convert('L')
-            resized_image_gray = PILtoTorch(resized_image_gray)
-            self.original_image = resized_image_rgb[:3, ...].clamp(0.0, 1.0).to(self.data_device)
-            self.image_gray = resized_image_gray.clamp(0.0, 1.0).to(self.data_device)
+        resized_image = transforms.ToPILImage()(self.original_image) 
+        if ncc_scale != 1.0:
+            resized_image = resized_image.resize((int(self.image_width/ncc_scale), int(self.image_width/ncc_scale)))
+        resized_image_gray = resized_image.convert('L')
+        resized_image_gray = PILtoTorch(resized_image_gray)
+        self.image_gray = resized_image_gray.clamp(0.0, 1.0).to(self.data_device)
 
-            # for DTU
-            mask_path = image_path.replace("images", "mask")[:-10]
-            mask_path = mask_path + image_path[-7:]
-            if os.path.exists(mask_path):
-                self.mask = torch.tensor(cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)).to(self.data_device).squeeze()/255
-                self.mask = erode(self.mask[None,None].float()).squeeze()
-                self.mask = torch.nn.functional.interpolate(self.mask[None,None], size=(image_height,image_width), mode='bilinear', align_corners=False).squeeze()
-                self.mask = (self.mask < 0.5).to(self.data_device)
-
-        self.image_width = image_width
-        self.image_height = image_height
-        self.resolution = (image_width, image_height)
         self.Fx = fov2focal(FoVx, self.image_width)
         self.Fy = fov2focal(FoVy, self.image_height)
         self.Cx = 0.5 * self.image_width
@@ -101,19 +93,7 @@ class Camera(nn.Module):
         self.plane_mask, self.non_plane_mask = None, None
 
     def get_image(self):
-        if self.preload_img:
-            return self.original_image.cuda(), self.image_gray.cuda()
-        else:
-            image = Image.open(self.image_path)
-            resized_image = image.resize((self.image_width, self.image_height))
-            resized_image_rgb = PILtoTorch(resized_image)
-            if self.ncc_scale != 1.0:
-                resized_image = image.resize((int(self.image_width/self.ncc_scale), int(self.image_height/self.ncc_scale)))
-            resized_image_gray = resized_image.convert('L')
-            resized_image_gray = PILtoTorch(resized_image_gray)
-            gt_image = resized_image_rgb[:3, ...].clamp(0.0, 1.0)
-            gt_image_gray = resized_image_gray.clamp(0.0, 1.0)
-            return gt_image.cuda(), gt_image_gray.cuda()
+        return self.original_image.cuda(), self.image_gray.cuda()
 
     def get_calib_matrix_nerf(self, scale=1.0):
         intrinsic_matrix = torch.tensor([[self.Fx/scale, 0, self.Cx/scale], [0, self.Fy/scale, self.Cy/scale], [0, 0, 1]]).float()
@@ -122,8 +102,7 @@ class Camera(nn.Module):
     
     def get_rays(self, scale=1.0):
         W, H = int(self.image_width/scale), int(self.image_height/scale)
-        ix, iy = torch.meshgrid(
-            torch.arange(W), torch.arange(H), indexing='xy')
+        ix, iy = torch.meshgrid(torch.arange(W, device='cuda').float(), torch.arange(H, device='cuda').float(), indexing='xy')
         rays_d = torch.stack(
                     [(ix-self.Cx/scale) / self.Fx * scale,
                     (iy-self.Cy/scale) / self.Fy * scale,

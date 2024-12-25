@@ -166,8 +166,10 @@ class GaussianModel:
         scales = torch.log(torch.sqrt(dist2))[...,None].repeat(1, 3)
         rots = torch.rand((fused_point_cloud.shape[0], 4), device="cuda")
 
-        opacities = self.inverse_opacity_activation(0.4 * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda"))
-        kappas = torch.ones_like(opacities) * 50.0
+        opacities = self.inverse_opacity_activation(0.1 * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda"))
+        # kappas = self.inverse_opacity_activation(torch.ones_like(opacities) / 3)
+        kappas = torch.ones_like(opacities) * 100
+        
         self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
         self._features_dc = nn.Parameter(features[:,:,0:1].transpose(1, 2).contiguous().requires_grad_(True))
         self._features_rest = nn.Parameter(features[:,:,1:].transpose(1, 2).contiguous().requires_grad_(True))
@@ -201,6 +203,9 @@ class GaussianModel:
                                                     lr_final=training_args.position_lr_final*self.spatial_lr_scale,
                                                     lr_delay_mult=training_args.position_lr_delay_mult,
                                                     max_steps=training_args.position_lr_max_steps)
+        # self.rot_scheduler_args = get_expon_lr_func(lr_init=training_args.rotation_lr_init,
+        #                                             lr_final=training_args.rotation_lr_final,
+        #                                             max_steps=training_args.rotation_lr_max_steps)
 
     def clip_grad_norm(self, max_norm):
         torch.nn.utils.clip_grad_norm_(self._xyz, max_norm)
@@ -215,7 +220,11 @@ class GaussianModel:
             if param_group["name"] == "xyz":
                 lr = self.xyz_scheduler_args(iteration)
                 param_group['lr'] = lr
-                return lr
+                # return lr
+            # if param_group["name"] == "scaling":
+            #     lr = self.rot_scheduler_args(iteration)
+            #     param_group['lr'] = lr
+            #     # return lr
 
     def construct_list_of_attributes(self):
         l = ['x', 'y', 'z', 'nx', 'ny', 'nz']

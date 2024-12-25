@@ -136,6 +136,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         rays_d = viewpoint_camera.get_rays()
         # breakpoint()
         render_depth_expected = render_depth_expected / rays_d.norm(dim=-1, keepdim=True).permute(2,0,1)
+        render_depth_median = render_depth_median / rays_d.norm(dim=-1, keepdim=True).permute(2,0,1)
     # get depth distortion map
     render_dist = allmap[6:7]
 

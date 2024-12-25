@@ -29,12 +29,11 @@ class CameraInfo(NamedTuple):
     T: np.array
     FovY: np.array
     FovX: np.array
+    image: np.array
     image_path: str
     image_name: str
     width: int
     height: int
-    fx: float
-    fy: float
 
 class SceneInfo(NamedTuple):
     point_cloud: BasicPointCloud
@@ -65,20 +64,6 @@ def getNerfppNorm(cam_info):
     translate = -center
 
     return {"translate": translate, "radius": radius}
-
-def load_poses(pose_path, num):
-    poses = []
-    with open(pose_path, "r") as f:
-        lines = f.readlines()
-    for i in range(num):
-        line = lines[i]
-        c2w = np.array(list(map(float, line.split()))).reshape(4, 4)
-        c2w[:3,3] = c2w[:3,3] * 10.0
-        w2c = np.linalg.inv(c2w)
-        w2c = w2c
-        poses.append(w2c)
-    poses = np.stack(poses, axis=0)
-    return poses
 
 def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
     cam_infos = []
@@ -111,10 +96,10 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
 
         image_path = os.path.join(images_folder, os.path.basename(extr.name))
         image_name = os.path.basename(image_path).split(".")[0]
+        image = Image.open(image_path)
 
-        cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX,
-                              image_path=image_path, image_name=image_name, 
-                              width=width, height=height, fx=focal_length_x, fy=focal_length_y)
+        cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
+                              image_path=image_path, image_name=image_name, width=width, height=height)
         cam_infos.append(cam_info)
     sys.stdout.write('\n')
     return cam_infos
@@ -146,35 +131,21 @@ def storePly(path, xyz, rgb):
 
 def readColmapSceneInfo(path, images, eval, llffhold=8):
     try:
-        cameras_extrinsic_file = os.path.join(path, "sparse", "images.bin")
-        cameras_intrinsic_file = os.path.join(path, "sparse", "cameras.bin")
+        cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.bin")
+        cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.bin")
         cam_extrinsics = read_extrinsics_binary(cameras_extrinsic_file)
         cam_intrinsics = read_intrinsics_binary(cameras_intrinsic_file)
     except:
-        cameras_extrinsic_file = os.path.join(path, "sparse", "images.txt")
-        cameras_intrinsic_file = os.path.join(path, "sparse", "cameras.txt")
+        cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.txt")
+        cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.txt")
         cam_extrinsics = read_extrinsics_text(cameras_extrinsic_file)
         cam_intrinsics = read_intrinsics_text(cameras_intrinsic_file)
+
     reading_dir = "images" if images == None else images
     cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=os.path.join(path, reading_dir))
-    # cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : int(x.image_name.split('_')[-1]))
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
-    
-    js_file = f"{path}/split.json"
-    train_list = None
-    test_list = None
-    if os.path.exists(js_file):
-        with open(js_file) as file:
-            meta = json.load(file)
-            train_list = meta["train"]
-            test_list = meta["test"]
-            print(f"train_list {len(train_list)}, test_list {len(test_list)}")
 
-    if train_list is not None:
-        train_cam_infos = [c for idx, c in enumerate(cam_infos) if c.image_name in train_list]
-        test_cam_infos = [c for idx, c in enumerate(cam_infos) if c.image_name in test_list]
-        print(f"train_cam_infos {len(train_cam_infos)}, test_cam_infos {len(test_cam_infos)}")
-    elif eval:
+    if eval:
         train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold != 0]
         test_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold == 0]
     else:
@@ -183,14 +154,13 @@ def readColmapSceneInfo(path, images, eval, llffhold=8):
 
     nerf_normalization = getNerfppNorm(train_cam_infos)
 
-    ply_path = os.path.join(path, "sparse/points3D.ply")
-    bin_path = os.path.join(path, "sparse/points3D.bin")
-    txt_path = os.path.join(path, "sparse/points3D.txt")
-    if not os.path.exists(ply_path) or True:
+    ply_path = os.path.join(path, "sparse/0/points3D.ply")
+    bin_path = os.path.join(path, "sparse/0/points3D.bin")
+    txt_path = os.path.join(path, "sparse/0/points3D.txt")
+    if not os.path.exists(ply_path):
         print("Converting point3d.bin to .ply, will happen only the first time you open the scene.")
         try:
             xyz, rgb, _ = read_points3D_binary(bin_path)
-            print(f"xyz {xyz.shape}")
         except:
             xyz, rgb, _ = read_points3D_text(txt_path)
         storePly(ply_path, xyz, rgb)

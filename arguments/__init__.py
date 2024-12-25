@@ -54,7 +54,6 @@ class ModelParams(ParamGroup):
         self._white_background = False
         self.data_device = "cuda"
         self.eval = False
-        self.preload_img = True
         self.ncc_scale = 1.0
         self.multi_view_num = 8
         self.multi_view_max_angle = 30
@@ -84,11 +83,14 @@ class OptimizationParams(ParamGroup):
         self.position_lr_max_steps = 30_000
         self.feature_lr = 0.0025
         self.opacity_lr = 0.05
-        self.scaling_lr = 0.005
+        self.scaling_lr = 0.002
         self.rotation_lr = 0.001
+        self.rotation_lr_init = 0.001
+        self.rotation_lr_final = 0.00001
+        self.rotation_lr_max_steps = 30_000
         self.percent_dense = 0.01
         self.lambda_dssim = 0.2
-        self.lambda_dist = 100.0
+        self.lambda_dist = 1.0
         self.lambda_normal = 0.05
         self.opacity_cull = 0.05
 
@@ -96,14 +98,14 @@ class OptimizationParams(ParamGroup):
         self.opacity_reset_interval = 3000
         self.densify_from_iter = 500
         self.densify_until_iter = 15_000
-        self.densify_grad_threshold = 0.0002
+        self.densify_grad_threshold = 0.0003
         
         self.use_virtul_cam = False
         self.virtul_cam_prob = 0.5
         self.use_multi_view_trim = True
         self.multi_view_ncc_weight = 0.15
         self.multi_view_geo_weight = 0.03
-        self.multi_view_weight_from_iter = 30_000
+        self.multi_view_weight_from_iter = 9_000
         self.multi_view_patch_size = 3
         self.multi_view_sample_num = 102400
         self.multi_view_pixel_noise_th = 1.0

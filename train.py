@@ -117,8 +117,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if not viewpoint_stack:
             viewpoint_stack = scene.getTrainCameras().copy()
         viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
-        udfw = weight_schedule(iteration, 15001, 15002, 0., 1.0)
-        # udfw = 1.0
+        # breakpoint()
+        # udfw = weight_schedule(iteration, 15001, 15002, 0., 1.0)
+        udfw = 1.0
+        # udfw = 0.0
+        
         # print(udfw)
         render_pkg = render(viewpoint_cam, gaussians, pipe, background,lamda=udfw)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
@@ -130,15 +133,20 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
         # regularization
         lambda_normal = opt.lambda_normal if iteration > 7000 else 0.0
+        # lambda_dist = opt.lambda_dist if iteration > 3000 and iteration < 15000 else 0.0
         lambda_dist = opt.lambda_dist if iteration > 3000 else 0.0
+        
         lambda_scale = 0.5 if iteration > 30000 else 0.0
         lambda_opacity = 0.1 if iteration > 30000 else 0.0
-        rend_dist = render_pkg["rend_dist"]
+        rend_dist = render_pkg["rend_dist"] 
         rend_normal  = render_pkg['rend_normal']
         surf_normal = render_pkg['surf_normal']
         normal_error = (1 - (rend_normal * surf_normal).sum(dim=0))[None]
         normal_loss = lambda_normal * (normal_error).mean()
         dist_loss = lambda_dist * (rend_dist).mean()
+        # if lambda_dist > 0.0:
+        #     print(f"dist_loss: {dist_loss.item()}")
+
         scale_loss = lambda_scale * (gaussians.get_scaling ** 2).mean()
         opacity_reg = lambda_opacity * ((gaussians.get_kappas.log() / 6. -  gaussians.get_opacity) ** 2).mean()
         # if iteration % 10 == 0:
@@ -217,70 +225,71 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     geo_loss = geo_weight * ((weights * pixel_noise)[d_mask]).mean()
                 
                     loss += geo_loss
-                    if use_virtul_cam is False:
-                        with torch.no_grad():
-                            ## sample mask
-                            d_mask = d_mask.reshape(-1)
-                            valid_indices = torch.arange(d_mask.shape[0], device=d_mask.device)[d_mask]
-                            if d_mask.sum() > sample_num:
-                                index = np.random.choice(d_mask.sum().cpu().numpy(), sample_num, replace = False)
-                                valid_indices = valid_indices[index]
+                    # if use_virtul_cam is False:
+                    #     with torch.no_grad():
+                    #         ## sample mask
+                    #         d_mask = d_mask.reshape(-1)
+                    #         valid_indices = torch.arange(d_mask.shape[0], device=d_mask.device)[d_mask]
+                    #         if d_mask.sum() > sample_num:
+                    #             index = np.random.choice(d_mask.sum().cpu().numpy(), sample_num, replace = False)
+                    #             valid_indices = valid_indices[index]
 
-                            weights = weights.reshape(-1)[valid_indices]
-                            ## sample ref frame patch
-                            pixels = pixels.reshape(-1,2)[valid_indices]
-                            offsets = patch_offsets(patch_size, pixels.device)
-                            ori_pixels_patch = pixels.reshape(-1, 1, 2) / viewpoint_cam.ncc_scale + offsets.float()
+                    #         weights = weights.reshape(-1)[valid_indices]
+                    #         ## sample ref frame patch
+                    #         pixels = pixels.reshape(-1,2)[valid_indices]
+                    #         offsets = patch_offsets(patch_size, pixels.device)
+                    #         ori_pixels_patch = pixels.reshape(-1, 1, 2) / viewpoint_cam.ncc_scale + offsets.float()
                             
-                            H, W = gt_image_gray.squeeze().shape
-                            pixels_patch = ori_pixels_patch.clone()
-                            pixels_patch[:, :, 0] = 2 * pixels_patch[:, :, 0] / (W - 1) - 1.0
-                            pixels_patch[:, :, 1] = 2 * pixels_patch[:, :, 1] / (H - 1) - 1.0
-                            ref_gray_val = F.grid_sample(gt_image_gray.unsqueeze(1), pixels_patch.view(1, -1, 1, 2), align_corners=True)
-                            ref_gray_val = ref_gray_val.reshape(-1, total_patch_size)
+                    #         H, W = gt_image_gray.squeeze().shape
+                    #         pixels_patch = ori_pixels_patch.clone()
+                    #         pixels_patch[:, :, 0] = 2 * pixels_patch[:, :, 0] / (W - 1) - 1.0
+                    #         pixels_patch[:, :, 1] = 2 * pixels_patch[:, :, 1] / (H - 1) - 1.0
+                    #         ref_gray_val = F.grid_sample(gt_image_gray.unsqueeze(1), pixels_patch.view(1, -1, 1, 2), align_corners=True)
+                    #         ref_gray_val = ref_gray_val.reshape(-1, total_patch_size)
 
-                            ref_to_neareast_r = nearest_cam.world_view_transform[:3,:3].transpose(-1,-2) @ viewpoint_cam.world_view_transform[:3,:3]
-                            ref_to_neareast_t = -ref_to_neareast_r @ viewpoint_cam.world_view_transform[3,:3] + nearest_cam.world_view_transform[3,:3]
+                    #         ref_to_neareast_r = nearest_cam.world_view_transform[:3,:3].transpose(-1,-2) @ viewpoint_cam.world_view_transform[:3,:3]
+                    #         ref_to_neareast_t = -ref_to_neareast_r @ viewpoint_cam.world_view_transform[3,:3] + nearest_cam.world_view_transform[3,:3]
 
-                        ## compute Homography
-                        ref_local_n = render_pkg["rend_normal"].permute(1,2,0)
-                        ref_local_n = ref_local_n.reshape(-1,3)[valid_indices]
+                    #     ## compute Homography
+                    #     ref_local_n = render_pkg["rend_normal"].permute(1,2,0)
+                    #     ref_local_n = ref_local_n.reshape(-1,3)[valid_indices]
 
-                        # ref_local_d = render_pkg['rendered_distance'].squeeze()
-                        rays_d = viewpoint_cam.get_rays().reshape(-1,3)[valid_indices]
+                    #     # ref_local_d = render_pkg['rendered_distance'].squeeze()
+                    #     rays_d = viewpoint_cam.get_rays().reshape(-1,3)[valid_indices]
+                    #     mask = (ref_local_n * rays_d).sum(-1).abs() != 0
+                    #     ref_local_d = render_pkg['surf_depth'].view(-1)[valid_indices] * ((ref_local_n * rays_d).sum(-1).abs())
                         
-                        ref_local_d = render_pkg['surf_depth'].view(-1)[valid_indices] * ((ref_local_n * rays_d).sum(-1).abs())
-                        # ref_local_d = ref_local_d.reshape(H,W)
-                        # ref_local_d = ref_local_d.reshape(-1)[valid_indices]
+                    #     # ref_local_d = ref_local_d.reshape(H,W)
+                    #     # ref_local_d = ref_local_d.reshape(-1)[valid_indices]
                         
-                        H_ref_to_neareast = ref_to_neareast_r[None] - \
-                            torch.matmul(ref_to_neareast_t[None,:,None].expand(ref_local_d.shape[0],3,1), 
-                                        ref_local_n[:,:,None].expand(ref_local_d.shape[0],3,1).permute(0, 2, 1))/ref_local_d[...,None,None]
-                        H_ref_to_neareast = torch.matmul(nearest_cam.get_k(nearest_cam.ncc_scale)[None].expand(ref_local_d.shape[0], 3, 3), H_ref_to_neareast)
-                        H_ref_to_neareast = H_ref_to_neareast @ viewpoint_cam.get_inv_k(viewpoint_cam.ncc_scale)
+                    #     H_ref_to_neareast = ref_to_neareast_r[None] - \
+                    #         torch.matmul(ref_to_neareast_t[None,:,None].expand(ref_local_d.shape[0],3,1), 
+                    #                     ref_local_n[:,:,None].expand(ref_local_d.shape[0],3,1).permute(0, 2, 1))/ref_local_d[...,None,None]
+                    #     H_ref_to_neareast = torch.matmul(nearest_cam.get_k(nearest_cam.ncc_scale)[None].expand(ref_local_d.shape[0], 3, 3), H_ref_to_neareast)
+                    #     H_ref_to_neareast = H_ref_to_neareast @ viewpoint_cam.get_inv_k(viewpoint_cam.ncc_scale)
+                    #     # H_ref_to_neareast = H_ref_to_neareast
+                    #     ## compute neareast frame patch
+                    #     grid = patch_warp(H_ref_to_neareast.reshape(-1,3,3), ori_pixels_patch)
+                    #     grid[:, :, 0] = 2 * grid[:, :, 0] / (W - 1) - 1.0
+                    #     grid[:, :, 1] = 2 * grid[:, :, 1] / (H - 1) - 1.0
+                    #     _, nearest_image_gray = nearest_cam.get_image()
+                    #     sampled_gray_val = F.grid_sample(nearest_image_gray[None], grid.reshape(1, -1, 1, 2), align_corners=True)
+                    #     sampled_gray_val = sampled_gray_val.reshape(-1, total_patch_size)
                         
-                        ## compute neareast frame patch
-                        grid = patch_warp(H_ref_to_neareast.reshape(-1,3,3), ori_pixels_patch)
-                        grid[:, :, 0] = 2 * grid[:, :, 0] / (W - 1) - 1.0
-                        grid[:, :, 1] = 2 * grid[:, :, 1] / (H - 1) - 1.0
-                        _, nearest_image_gray = nearest_cam.get_image()
-                        sampled_gray_val = F.grid_sample(nearest_image_gray[None], grid.reshape(1, -1, 1, 2), align_corners=True)
-                        sampled_gray_val = sampled_gray_val.reshape(-1, total_patch_size)
-                        
-                        ## compute loss
-                        ncc, ncc_mask = lncc(ref_gray_val, sampled_gray_val)
-                        mask = ncc_mask.reshape(-1)
-                        ncc = ncc.reshape(-1) * weights
-                        ncc = ncc[mask].squeeze()
+                    #     ## compute loss
+                    #     ncc, ncc_mask = lncc(ref_gray_val[mask], sampled_gray_val[mask])
+                    #     mask = ncc_mask.reshape(-1)
+                    #     ncc = ncc.reshape(-1) * weights
+                    #     ncc = ncc[mask].squeeze()
 
-                        if mask.sum() > 0:
-                            ncc_loss = ncc_weight * ncc.mean()
-                            loss += ncc_loss
-                            if iteration > 7000:
-                                ncc_grad = torch.autograd.grad(ncc.mean(), render_pkg['surf_depth'],retain_graph=True)[0]
-                                geo_grad = torch.autograd.grad(geo_loss, render_pkg['surf_depth'],retain_graph=True)[0]
-                                if ncc_grad.isnan().any() or geo_grad.isnan().any():
-                                    breakpoint()
+                    #     if mask.sum() > 0:
+                    #         ncc_loss = ncc_weight * ncc.mean()
+                    #         loss += ncc_loss
+                    #         if iteration > 7000:
+                    #             ncc_grad = torch.autograd.grad(ncc.mean(), render_pkg['surf_depth'],retain_graph=True)[0]
+                    #             geo_grad = torch.autograd.grad(geo_loss, render_pkg['surf_depth'],retain_graph=True)[0]
+                    #             if ncc_grad.isnan().any() or geo_grad.isnan().any():
+                    #                 breakpoint()
                                 
         total_loss = loss + dist_loss + normal_loss + scale_loss + opacity_reg
         
@@ -466,7 +475,7 @@ if __name__ == "__main__":
     parser.add_argument('--port', type=int, default=6009)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
     parser.add_argument("--test_iterations", nargs="+", type=int, default=[7_000, 15_000, 20_000, 30_000])
-    parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000, 30_000])
+    parser.add_argument("--save_iterations", nargs="+", type=int, default=[20000, 30_000])
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[15002])
     parser.add_argument("--start_checkpoint", type=str, default = None)

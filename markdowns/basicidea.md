@@ -259,7 +259,7 @@ $$
     \frac{\partial L}{\partial z_i} &= 2\omega_i(z_i\sum_{j=0}^{i-1}\omega_j +  - \sum_{j=0}^{i-1}\omega_j z_j) + 2z_i\omega_i\sum_{j=i+1}^{N}\omega_j - 2\omega_i\sum_{j=i+1}^{N}\omega_j z_j&\\
     &= 2\omega_i(z_i(\sum_{j=0}^{i-1}\omega_j+\sum_{j=i+1}^{N}\omega_j)  - (\sum_{j=0}^{i-1}\omega_j z_j + \sum_{j=i+1}^{N}\omega_j z_j))&\\
     \frac{\partial \omega_i}{\partial o_i} &= T_i &\\
-    \frac{\partial \omega_i}{\partial \alpha_j} &= -o_i\prod_{k=0}^{j-1}(1-\alpha_k)\prod_{k=j+1}^{N}(1-\alpha_k) &\\ 
+    \frac{\partial \omega_i}{\partial \alpha_j} &= -o_i\prod_{k=0}^{j-1}(1-\alpha_k)\prod_{k=j+1}^{i-1}(1-\alpha_k) &\\ 
     
     \end{align}
 $$

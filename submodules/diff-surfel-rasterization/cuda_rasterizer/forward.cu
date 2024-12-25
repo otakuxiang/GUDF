@@ -825,14 +825,14 @@ renderCUDA_GUDF(
 #if RENDER_AXUTILITY
 			// Render depth distortion map
 			// Efficient implementation of distortion loss, see 2DGS' paper appendix.
-			
-			float mapped_depth = (FAR_PLANE * depth - FAR_PLANE * NEAR_PLANE) / ((FAR_PLANE - NEAR_PLANE) * (depth));
+			float depth_u = depth / UDF_opacity;
+			float mapped_depth = (FAR_PLANE * depth_u - FAR_PLANE * NEAR_PLANE) / ((FAR_PLANE - NEAR_PLANE) * (depth_u));
 			float error = mapped_depth * mapped_depth * A + dist2 - 2 * mapped_depth * dist1;
-			distortion += error * nor_o.w * T;
-
-
+			distortion += error * alpha * T;
+			// printf("mapped_depth: %f, error: %f, distortion: %f\n", mapped_depth, error, distortion);
+ 
 			if (T > 0.5) {
-				median_depth = depth;
+				median_depth = depth_u;
 				median_weight = alpha * T;
 				median_contributor = contributor;
 			}
@@ -841,13 +841,13 @@ renderCUDA_GUDF(
 
 			// // Render depth map
 			D += nor_o.w * depth * T;
-			// // Efficient implementation of distortion loss, see 2DGS' paper appendix.
-			dist1 += mapped_depth * nor_o.w * T;
-			dist2 += mapped_depth * mapped_depth * nor_o.w * T;
-			if(isnan(mapped_depth) || isinf(mapped_depth) ){
-				printf("depth: %f\n", depth);
-			}
-			A += nor_o.w * T;
+			// // // Efficient implementation of distortion loss, see 2DGS' paper appendix.
+			dist1 += mapped_depth * alpha * T;
+			dist2 += mapped_depth * mapped_depth * alpha * T;
+			// if(isnan(mapped_depth) || isinf(mapped_depth) ){
+			// 	printf("depth: %f\n", depth);
+			// }
+			A += alpha * T;
 #endif
 
 			// Eq. (3) from 3D Gaussian splatting paper.
