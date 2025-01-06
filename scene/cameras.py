@@ -140,8 +140,7 @@ class MiniCam:
         
     def get_rays(self, scale=1.0):
         W, H = int(self.image_width/scale), int(self.image_height/scale)
-        ix, iy = torch.meshgrid(
-            torch.arange(W), torch.arange(H), indexing='xy')
+        ix, iy = torch.meshgrid(torch.arange(W, device='cuda').float(), torch.arange(H, device='cuda').float(), indexing='xy')
         rays_d = torch.stack(
                     [(ix-self.Cx/scale) / self.Fx * scale,
                     (iy-self.Cy/scale) / self.Fy * scale,

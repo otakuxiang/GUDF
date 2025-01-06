@@ -273,7 +273,6 @@ int CudaRasterizer::Rasterizer::forward(
 		geomState.view2gaussian,
 		geomState.rgb,
 		geomState.normal_opacity,
-		geomState.max_alpha,
 		tile_grid,
 		geomState.tiles_touched,
 		prefiltered
@@ -346,7 +345,6 @@ int CudaRasterizer::Rasterizer::forward(
 		geomState.view2gaussian,
 		geomState.depths,
 		geomState.normal_opacity,
-		geomState.max_alpha,
 		lambda,
 		imgState.accum_alpha,
 		imgState.n_contrib,

@@ -16,7 +16,7 @@ from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
 from utils.point_utils import depth_to_normal
 
-def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, lamda = 1., scaling_modifier = 1.0, override_color = None):
+def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, app_model=None, lamda = 1., scaling_modifier = 1.0, override_color = None):
     """
     Render the scene. 
     
@@ -151,7 +151,10 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     surf_normal = surf_normal.permute(2,0,1)
     # remember to multiply with accum_alpha since render_normal is unnormalized.
     surf_normal = surf_normal * (render_alpha).detach()
-
+    if app_model is not None:
+        appear_ab = app_model.appear_ab[torch.tensor(viewpoint_camera.uid).cuda()]
+        app_image = torch.exp(appear_ab[0]) * rendered_image + appear_ab[1]
+        rets.update({"app_image": app_image})   
 
     rets.update({
             'rend_alpha': render_alpha,

@@ -186,6 +186,8 @@ class GaussianModel:
         self.percent_dense = training_args.percent_dense
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
+        # breakpoint()
+        self.max_all_points = training_args.max_all_points
 
         l = [
             {'params': [self._xyz], 'lr': training_args.position_lr_init * self.spatial_lr_scale, "name": "xyz"},
@@ -203,9 +205,9 @@ class GaussianModel:
                                                     lr_final=training_args.position_lr_final*self.spatial_lr_scale,
                                                     lr_delay_mult=training_args.position_lr_delay_mult,
                                                     max_steps=training_args.position_lr_max_steps)
-        # self.rot_scheduler_args = get_expon_lr_func(lr_init=training_args.rotation_lr_init,
-        #                                             lr_final=training_args.rotation_lr_final,
-        #                                             max_steps=training_args.rotation_lr_max_steps)
+        self.rot_scheduler_args = get_expon_lr_func(lr_init=training_args.rotation_lr_init,
+                                                    lr_final=training_args.rotation_lr_final,
+                                                    max_steps=training_args.rotation_lr_max_steps)
 
     def clip_grad_norm(self, max_norm):
         torch.nn.utils.clip_grad_norm_(self._xyz, max_norm)
@@ -224,7 +226,7 @@ class GaussianModel:
             # if param_group["name"] == "scaling":
             #     lr = self.rot_scheduler_args(iteration)
             #     param_group['lr'] = lr
-            #     # return lr
+            # #     # return lr
 
     def construct_list_of_attributes(self):
         l = ['x', 'y', 'z', 'nx', 'ny', 'nz']
@@ -414,6 +416,14 @@ class GaussianModel:
         selected_pts_mask = torch.logical_and(selected_pts_mask,
                                               torch.max(self.get_scaling[...,:2], dim=1).values > self.percent_dense*scene_extent)
         # breakpoint()
+        if selected_pts_mask.sum() + n_init_points > self.max_all_points:
+            limited_num = self.max_all_points - n_init_points
+            padded_grad[~selected_pts_mask] = 0
+            ratio = limited_num / float(n_init_points)
+            threshold = torch.quantile(padded_grad, (1.0-ratio))
+            selected_pts_mask = torch.where(padded_grad > threshold, True, False)
+            
+        
         stds = self.get_scaling[selected_pts_mask][:,:2].repeat(N,1)
         stds = torch.cat([stds, 0 * torch.ones_like(stds[:,:1])], dim=-1)
         means = torch.zeros_like(stds)
@@ -434,11 +444,18 @@ class GaussianModel:
 
     def densify_and_clone(self, grads, grad_threshold, scene_extent):
         # Extract points that satisfy the gradient condition
+        n_init_points = self.get_xyz.shape[0]
         selected_pts_mask = torch.where(torch.norm(grads, dim=-1) >= grad_threshold, True, False)
         selected_pts_mask = torch.logical_and(selected_pts_mask,
                                               torch.max(self.get_scaling[...,:2], dim=1).values <= self.percent_dense*scene_extent)
         # breakpoint()
-        
+        if selected_pts_mask.sum() + n_init_points > self.max_all_points:
+            limited_num = self.max_all_points - n_init_points
+            grads_tmp = grads.squeeze().clone()
+            grads_tmp[~selected_pts_mask] = 0
+            ratio = limited_num / float(n_init_points)
+            threshold = torch.quantile(grads_tmp, (1.0-ratio))
+            selected_pts_mask = torch.where(grads_tmp > threshold, True, False)
         new_xyz = self._xyz[selected_pts_mask]
         new_features_dc = self._features_dc[selected_pts_mask]
         new_features_rest = self._features_rest[selected_pts_mask]
@@ -468,7 +485,7 @@ class GaussianModel:
             #     print("big_points_vs: %d, big_points_ws: %d small_opacity: %d" % (big_points_vs.sum().item(), big_points_ws.sum().item(), (self.get_opacity < min_opacity).sum().item()))
             #     breakpoint()
         self.prune_points(prune_mask)
-        # self.prune_kappas(1) 
+        # self.prune_kappas(0.1) 
         torch.cuda.empty_cache()
 
     def prune_kappas(self,min_kappa):

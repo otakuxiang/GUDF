@@ -47,7 +47,6 @@ namespace FORWARD
 		float* view2gaussians,
 		float* colors,
 		float4* normal_opacity,
-		float* max_alpha,
 		const dim3 grid,
 		uint32_t* tiles_touched,
 		bool prefiltered);
@@ -70,7 +69,6 @@ namespace FORWARD
 		const float* view2gaussians,
 		const float* depths,
 		const float4* normal_opacity,
-		const float* max_alpha,
 		const float lambda,
 		float* final_T,
 		uint32_t* n_contrib,

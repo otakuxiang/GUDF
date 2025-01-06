@@ -39,7 +39,7 @@ __device__ inline float computeMaxOpacity(const glm::vec3 &scale, const float ka
 
 __device__ float computeOpacityGUDF(const glm::vec3 &p_world, const float *normal, const float kappa, 
 	const int W, const int H,float focal_x, float focal_y, const float *view2gaussian, const float2 &pixf, 
-	const glm::vec3 &scale, float2 &t_range, float *int_depth
+	const glm::vec3 &scale, float2 &t_range, float *int_depth, float *inter_depth
 ){ 
 	if (scale[2] < 1e-6) return 1.0f;
 	const glm::vec<3,double,glm::packed_highp> scaled(scale[0],scale[1],scale[2]);
@@ -71,6 +71,7 @@ __device__ float computeOpacityGUDF(const glm::vec3 &p_world, const float *norma
 	float tn = (-B - sd) / (2*A);
 	float tf = (-B + sd) / (2*A);	
 	float depth_o = glm::dot(-cam_pos,normal_g) / glm::dot(ray_gauss,normal_g);
+	// inter_depth[0] = depth_o;
 	// if (tn > depth_o || tf < depth_o){
 	// 	return 1.0f;
  	// }
@@ -331,7 +332,6 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	float* view2gaussians,
 	float* rgb,
 	float4* normal_opacity,
-	float *max_alpha,
 	const dim3 grid,
 	uint32_t* tiles_touched,
 	bool prefiltered)
@@ -413,7 +413,6 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	// store them in float4
 	normal_opacity[idx] = {normal.x, normal.y, normal.z, opacities[idx]};
 	tiles_touched[idx] = (rect_max.y - rect_min.y) * (rect_max.x - rect_min.x); 
-	max_alpha[idx] = computeMaxOpacity(scales[idx],kappas[idx]);
 	// if(idx == 10000){
 	// 	printf("depth: %f\n", depths[idx]);
 	// 	printf("radii: %d\n", radii[idx]);
@@ -647,7 +646,6 @@ renderCUDA_GUDF(
 	const float* __restrict__ transMats,
 	const float* __restrict__ view2gaussian,
 	const float4* __restrict__ normal_opacity,
-	const float* __restrict__ max_alphas,
 	const float* __restrict__ points3d,
 	const float* __restrict__ kappas,
 	const glm::vec3* __restrict__ scales,
@@ -684,9 +682,8 @@ renderCUDA_GUDF(
 	__shared__ float collected_kappas[BLOCK_SIZE];
 	__shared__ float collected_view2gaussian[BLOCK_SIZE * 16];
 	__shared__ glm::vec3 collected_scales[BLOCK_SIZE];
-	__shared__ float collected_max_alphas[BLOCK_SIZE];
 	// Initialize helper variables
-	float T = 1.0f,A = 0.0f;
+	float T = 1.0f;
 	uint32_t contributor = 0;
 	uint32_t last_contributor = 0;
 	// float last_depth = 0.0f;
@@ -698,9 +695,6 @@ renderCUDA_GUDF(
 	// render axutility ouput
 	float D = { 0 };
 	float N[3] = {0};
-	float dist1 = {0};
-	float dist2 = {0};
-	float distortion = {0};
 	float median_depth = {0};
 	float median_weight = {0};
 	float median_contributor = {-1};
@@ -730,7 +724,6 @@ renderCUDA_GUDF(
 			for (int ii = 0; ii < 16; ii++)
 				collected_view2gaussian[16 * block.thread_rank() + ii] = view2gaussian[coll_id * 16 + ii];
 			collected_scales[block.thread_rank()] = scales[coll_id];
-			collected_max_alphas[block.thread_rank()] = max_alphas[coll_id];
 		}
 		block.sync();
 
@@ -751,9 +744,9 @@ renderCUDA_GUDF(
 			// float alpha = min(0.99f, nor_o.w * exp(power));
 			glm::vec3 p_world(collected_points3d[j].x, collected_points3d[j].y, collected_points3d[j].z);
 			float2 t_tange;
-			float UDF_opacity = 0,depth = 0;
+			float UDF_opacity = 0,depth = 0,inter_depth = 0;
 			UDF_opacity = 1 - computeOpacityGUDF(p_world,normal,collected_kappas[j],W,H,focal_x,focal_y,
-				collected_view2gaussian+j*16,pixf,collected_scales[j],t_tange,&depth);
+				collected_view2gaussian+j*16,pixf,collected_scales[j],t_tange,&depth,&inter_depth);
 			if (UDF_opacity < 1e-6f) continue; 
 			if (depth < 0.1) continue;
 			
@@ -825,29 +818,21 @@ renderCUDA_GUDF(
 #if RENDER_AXUTILITY
 			// Render depth distortion map
 			// Efficient implementation of distortion loss, see 2DGS' paper appendix.
-			float depth_u = depth / UDF_opacity;
-			float mapped_depth = (FAR_PLANE * depth_u - FAR_PLANE * NEAR_PLANE) / ((FAR_PLANE - NEAR_PLANE) * (depth_u));
-			float error = mapped_depth * mapped_depth * A + dist2 - 2 * mapped_depth * dist1;
-			distortion += error * alpha * T;
+
 			// printf("mapped_depth: %f, error: %f, distortion: %f\n", mapped_depth, error, distortion);
  
 			if (T > 0.5) {
-				median_depth = depth_u;
-				median_weight = alpha * T;
+				median_depth = depth;
+				median_weight = nor_o.w * T;
 				median_contributor = contributor;
 			}
 			// // Render normal map
 			for (int ch=0; ch<3; ch++) N[ch] += normal[ch] * alpha * T;
 
 			// // Render depth map
-			D += nor_o.w * depth * T;
+			D += nor_o.w * T * depth;
 			// // // Efficient implementation of distortion loss, see 2DGS' paper appendix.
-			dist1 += mapped_depth * alpha * T;
-			dist2 += mapped_depth * mapped_depth * alpha * T;
-			// if(isnan(mapped_depth) || isinf(mapped_depth) ){
-			// 	printf("depth: %f\n", depth);
-			// }
-			A += alpha * T;
+
 #endif
 
 			// Eq. (3) from 3D Gaussian splatting paper.
@@ -874,14 +859,10 @@ renderCUDA_GUDF(
 
 #if RENDER_AXUTILITY
 		n_contrib[pix_id + H * W] = median_contributor;
-		final_T[pix_id + 3 * H * W] = A;
-		final_T[pix_id + H * W] = dist1;
-		final_T[pix_id + 2 * H * W] = dist2;
 		out_others[pix_id + DEPTH_OFFSET * H * W] = D;
 		out_others[pix_id + ALPHA_OFFSET * H * W] = 1 - T;
 		for (int ch=0; ch<3; ch++) out_others[pix_id + (NORMAL_OFFSET+ch) * H * W] = N[ch];
 		out_others[pix_id + MIDDEPTH_OFFSET * H * W] = median_depth;
-		out_others[pix_id + DISTORTION_OFFSET * H * W] = distortion;
 		out_others[pix_id + MEDIAN_WEIGHT_OFFSET * H * W] = median_weight;
 #endif
 	}
@@ -906,7 +887,6 @@ void FORWARD::render(
 	const float* view2gaussians,
 	const float* depths,
 	const float4* normal_opacity,
-	const float* max_alphas,
 	const float lambda,
 	float* final_T,
 	uint32_t* n_contrib,
@@ -942,7 +922,6 @@ void FORWARD::render(
 			transMats,
 			view2gaussians,
 			normal_opacity,
-			max_alphas,
 			means3D,
 			kappas,
 			scales,
@@ -978,7 +957,6 @@ void FORWARD::preprocess(int P, int D, int M,
 	float* view2gaussians,
 	float* rgb,
 	float4* normal_opacity,
-	float* max_alpha,
 	const dim3 grid,
 	uint32_t* tiles_touched,
 	bool prefiltered)
@@ -1008,7 +986,6 @@ void FORWARD::preprocess(int P, int D, int M,
 		view2gaussians,
 		rgb,
 		normal_opacity,
-		max_alpha,
 		grid,
 		tiles_touched,
 		prefiltered

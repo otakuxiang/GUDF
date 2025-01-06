@@ -848,7 +848,6 @@ renderCUDA_GUDF(
 	const float* __restrict__ bg_color,
 	const float2* __restrict__ points_xy_image,
 	const float4* __restrict__ normal_opacity,
-	const float* __restrict__ max_alphas,
 	const float3* __restrict__ points3d,
 	const float* __restrict__ kappas,
 	const glm::vec3* __restrict__ scales,
@@ -892,7 +891,6 @@ renderCUDA_GUDF(
 	__shared__ float collected_kappas[BLOCK_SIZE];
 	__shared__ glm::vec3 collected_scales[BLOCK_SIZE];
 	__shared__ float collected_view2gaussian[BLOCK_SIZE * 16];
-	__shared__ float collected_malphas[BLOCK_SIZE];
 
 	// In the forward, we stored the final value for T, the
 	// product of all (1 - alpha) factors. 
@@ -934,9 +932,6 @@ renderCUDA_GUDF(
 	float accum_alpha_rec = 0;
 	float accum_normal_rec[3] = {0};
 	// for compute gradient with respect to the distortion map
-	const float final_A = inside ? final_Ts[pix_id + 3 * H * W] : 0;
-	const float final_D = inside ? final_Ts[pix_id + H * W] : 0;
-	const float final_D2 = inside ? final_Ts[pix_id + 2 * H * W] : 0;
 	float last_dL_dT = 0;
 #endif
 
@@ -974,8 +969,6 @@ renderCUDA_GUDF(
 			collected_scales[block.thread_rank()] = scales[coll_id];			
 			for (int i = 0; i < C; i++)
 				collected_colors[i * BLOCK_SIZE + block.thread_rank()] = colors[coll_id * C + i];
-				// collected_depths[block.thread_rank()] = depths[coll_id];
-			collected_malphas[block.thread_rank()] = max_alphas[coll_id];
 		}
 		block.sync();
 
@@ -1113,33 +1106,13 @@ renderCUDA_GUDF(
 			float dL_dT = 0.f;
 			float depth_u = depth / UDF_opacity;
 #if RENDER_AXUTILITY
-			float m_d = (FAR_PLANE * depth_u - FAR_PLANE * NEAR_PLANE) / ((FAR_PLANE - NEAR_PLANE) * depth_u );
-			// float m_d = depth;
 
-			float dmd_dd = (FAR_PLANE * NEAR_PLANE) / ((FAR_PLANE - NEAR_PLANE) * depth_u * depth_u);
-			// float dmd_dd = 1;
 			
 			if (contributor == median_contributor-1) {
-				dL_dz += dL_dmedian_depth / UDF_opacity;
-				dL_dT += dL_dmedian_depth * depth / (UDF_opacity * UDF_opacity);
+				dL_dz += dL_dmedian_depth;
 				dL_dweight += dL_dmax_dweight;
 			}
 
-#if DETACH_WEIGHT 
-			// if not detached weight, sometimes 
-			// it will bia toward creating extragated 2D Gaussians near front
-			dL_dweight += 0;
-#else
-			dL_dweight += (final_D2 + m_d * m_d * final_A - 2 * m_d * final_D) * dL_dreg;
-#endif
-			float dd_dLdalpha = T * (dL_dweight - last_dL_dT);
-			// // propagate the current weight W_{i} to next weight W_{i-1}
-			// bool flag = isnan(last_dL_dT) || isinf(last_dL_dT);
-			// float tmp = last_dL_dT;
-			last_dL_dT = dL_dweight * alpha + (1 - alpha) * last_dL_dT;
-			float dL_dmd = 2.0f * (T * alpha) * (m_d * final_A - final_D) * dL_dreg;
-			dL_dz += dL_dmd * dmd_dd / UDF_opacity;
-			float dd_dLdT = dL_dmd * dmd_dd * depth / (UDF_opacity * UDF_opacity);
 			// Propagate gradients w.r.t ray-splat depths
 			accum_depth_rec = last_opacity * last_depth + (1.f - last_alpha) * accum_depth_rec;
 			last_depth = depth;
@@ -1185,14 +1158,18 @@ renderCUDA_GUDF(
 			// 	printf("dL_dT is too large: %f, dL_dalpha :%f\n, nor_o.w: %f lambda: %f\n", dL_dT,dL_dalpha, nor_o.w, lambda); 
 			// }
 			// compute dL_dkappa dalpha_dT = -nor_o.w
+			
+			
 
 #if RENDER_AXUTILITY
 			dL_dz += nor_o.w * T * dL_ddepth; 
 #endif	
+			// if(isnan(dL_dT) || isinf(dL_dT) || isnan(dL_dz) || isinf(dL_dz)){
+			// 	printf("dL_dT or dL_dz is nan or inf\n");
+			// }		
 			atomicAdd(&dL_dscale[global_id][0], dL_dT * dT_dscale[0] + dL_dz * dD_dscale[0]);
 			atomicAdd(&dL_dscale[global_id][1], dL_dT * dT_dscale[1] + dL_dz * dD_dscale[1]);
 			atomicAdd(&dL_dscale[global_id][2], dL_dT * dT_dscale[2] + dL_dz * dD_dscale[2]);
-			dL_dT += dd_dLdT - nor_o.w * dd_dLdalpha; 
 			atomicAdd(&dL_dkappas[global_id], dL_dT * dT_dkappa + dL_dz * dD_dkappa);
 			// compute dL_dmean3D dalpha_dT = -nor_o.w 
 			dL_dnormal[0] += dL_dT * dT_dnormal3D.x + dL_dz * dD_dnormal3D.x;
@@ -1206,8 +1183,6 @@ renderCUDA_GUDF(
 				atomicAdd(&(dL_dview2gaussians[global_id * 16 + ii]), dL_dT * dT_dV2G[ii]
 					+dL_dz * dD_dV2G[ii]);
 			}
-
-
 
 			// Update gradients w.r.t. opacity of the Gaussian
 			dL_do += alpha / (nor_o.w + 1e-5) * dL_dalpha;
@@ -1572,7 +1547,6 @@ void BACKWARD::render(
 			bg_color,
 			means2D,
 			normal_opacity,
-			max_alphas,
 			means3D,
 			kappas,
 			scales,
