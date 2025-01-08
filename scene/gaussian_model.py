@@ -54,6 +54,8 @@ class GaussianModel:
         self._kappas = torch.empty(0)
         self.max_radii2D = torch.empty(0)
         self.xyz_gradient_accum = torch.empty(0)
+        self.color_gradient_accum = torch.empty(0)
+        self.color_denom = torch.empty(0)
         self.denom = torch.empty(0)
         self.optimizer = None
         self.percent_dense = 0
@@ -142,8 +144,9 @@ class GaussianModel:
         if self.enable_opacity:
             return self.opacity_activation(self._opacity)
         else:
-            with torch.no_grad():
-                return self.opacity_activation(self._opacity)
+            return torch.ones_like(self._opacity)
+            # with torch.no_grad():
+            #     return self.opacity_activation(self._opacity)
             
     def get_covariance(self, scaling_modifier = 1):
         return self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation)
@@ -164,6 +167,7 @@ class GaussianModel:
 
         dist2 = torch.clamp_min(distCUDA2(torch.from_numpy(np.asarray(pcd.points)).float().cuda()), 0.0000001)
         scales = torch.log(torch.sqrt(dist2))[...,None].repeat(1, 3)
+        # scales[:,2] = scales[:,2].clamp(max=0.2)
         rots = torch.rand((fused_point_cloud.shape[0], 4), device="cuda")
 
         opacities = self.inverse_opacity_activation(0.1 * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda"))
@@ -185,6 +189,8 @@ class GaussianModel:
     def training_setup(self, training_args):
         self.percent_dense = training_args.percent_dense
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
+        self.color_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
+        self.color_denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         # breakpoint()
         self.max_all_points = training_args.max_all_points
@@ -264,6 +270,8 @@ class GaussianModel:
         PlyData([el]).write(path)
 
     def reset_opacity(self):
+        if not self.enable_opacity:
+            return
         opacities_new = self.inverse_opacity_activation(torch.min(self.get_opacity, torch.ones_like(self.get_opacity)*0.01))
         optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new, "opacity")
         self._opacity = optimizable_tensors["opacity"]
@@ -358,7 +366,8 @@ class GaussianModel:
         self._rotation = optimizable_tensors["rotation"]
         self._kappas = optimizable_tensors["kappas"] 
         self.xyz_gradient_accum = self.xyz_gradient_accum[valid_points_mask]
-
+        self.color_gradient_accum = self.color_gradient_accum[valid_points_mask]
+        self.color_denom = self.color_denom[valid_points_mask]
         self.denom = self.denom[valid_points_mask]
         self.max_radii2D = self.max_radii2D[valid_points_mask]
 
@@ -404,10 +413,12 @@ class GaussianModel:
         
 
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
+        self.color_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
+        self.color_denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
 
-    def densify_and_split(self, grads, grad_threshold, scene_extent, N=2):
+    def densify_and_split(self, grads,color_grads, grad_threshold, scene_extent, N=2):
         n_init_points = self.get_xyz.shape[0]
         # Extract points that satisfy the gradient condition
         padded_grad = torch.zeros((n_init_points), device="cuda")
@@ -418,12 +429,26 @@ class GaussianModel:
         # breakpoint()
         if selected_pts_mask.sum() + n_init_points > self.max_all_points:
             limited_num = self.max_all_points - n_init_points
-            padded_grad[~selected_pts_mask] = 0
-            ratio = limited_num / float(n_init_points)
-            threshold = torch.quantile(padded_grad, (1.0-ratio))
-            selected_pts_mask = torch.where(padded_grad > threshold, True, False)
-            
+            if limited_num < 0:
+                selected_pts_mask = torch.zeros_like(selected_pts_mask)
+            else:
+                padded_grad[~selected_pts_mask] = 0
+                ratio = limited_num / float(n_init_points)
+                threshold = torch.quantile(padded_grad, (1.0-ratio))
+                selected_pts_mask = torch.where(padded_grad > threshold, True, False)
         
+        padded_grad_color = torch.zeros((n_init_points), device="cuda")
+        padded_grad_color[:color_grads.shape[0]] = color_grads.squeeze()
+        color_mask = torch.where(padded_grad_color >= 0.01 * grad_threshold, True, False)
+        color_mask = torch.logical_and(color_mask,
+                                              torch.max(self.get_scaling[...,:2], dim=1).values > self.percent_dense*scene_extent)
+        padded_grad_color[~color_mask] = 0
+        if color_mask.sum().float() > 5:
+            ratio = 0.2 * color_mask.sum().float() / float(n_init_points)    
+            threshold = torch.quantile(padded_grad_color, (1.0-ratio))
+            color_mask = torch.where(padded_grad_color > threshold, True, False)
+            selected_pts_mask = torch.logical_or(selected_pts_mask, color_mask)
+            
         stds = self.get_scaling[selected_pts_mask][:,:2].repeat(N,1)
         stds = torch.cat([stds, 0 * torch.ones_like(stds[:,:1])], dim=-1)
         means = torch.zeros_like(stds)
@@ -442,20 +467,34 @@ class GaussianModel:
         prune_filter = torch.cat((selected_pts_mask, torch.zeros(N * selected_pts_mask.sum(), device="cuda", dtype=bool)))
         self.prune_points(prune_filter)
 
-    def densify_and_clone(self, grads, grad_threshold, scene_extent):
+    def densify_and_clone(self, grads,color_grads, grad_threshold, scene_extent):
         # Extract points that satisfy the gradient condition
         n_init_points = self.get_xyz.shape[0]
         selected_pts_mask = torch.where(torch.norm(grads, dim=-1) >= grad_threshold, True, False)
         selected_pts_mask = torch.logical_and(selected_pts_mask,
                                               torch.max(self.get_scaling[...,:2], dim=1).values <= self.percent_dense*scene_extent)
+        
         # breakpoint()
         if selected_pts_mask.sum() + n_init_points > self.max_all_points:
             limited_num = self.max_all_points - n_init_points
-            grads_tmp = grads.squeeze().clone()
-            grads_tmp[~selected_pts_mask] = 0
-            ratio = limited_num / float(n_init_points)
-            threshold = torch.quantile(grads_tmp, (1.0-ratio))
-            selected_pts_mask = torch.where(grads_tmp > threshold, True, False)
+            if limited_num < 0:
+                selected_pts_mask = torch.zeros_like(selected_pts_mask)
+            else:
+                grads_tmp = grads.squeeze().clone()
+                grads_tmp[~selected_pts_mask] = 0
+                ratio = limited_num / float(n_init_points)
+                threshold = torch.quantile(grads_tmp, (1.0-ratio))
+                selected_pts_mask = torch.where(grads_tmp > threshold, True, False)
+        color_mask = torch.where(color_grads.squeeze() >= 0.01 * grad_threshold, True, False)
+        color_mask = torch.logical_and(color_mask,
+                                              torch.max(self.get_scaling[...,:2], dim=1).values <= self.percent_dense*scene_extent)
+        color_grad_tmp = color_grads.squeeze().clone()
+        color_grad_tmp[~color_mask] = 0
+        if color_mask.sum().float() > 5:
+            ratio = 0.2 * color_mask.sum().float() / float(n_init_points)
+            threshold = torch.quantile(color_grad_tmp, (1.0-ratio))
+            color_mask = torch.where(color_grad_tmp > threshold, True, False)
+            selected_pts_mask = torch.logical_or(selected_pts_mask, color_mask)
         new_xyz = self._xyz[selected_pts_mask]
         new_features_dc = self._features_dc[selected_pts_mask]
         new_features_rest = self._features_rest[selected_pts_mask]
@@ -467,10 +506,11 @@ class GaussianModel:
 
     def densify_and_prune(self, max_grad, min_opacity, extent, max_screen_size):
         grads = self.xyz_gradient_accum / self.denom
+        color_grads = self.color_gradient_accum / self.color_denom
         grads[grads.isnan()] = 0.0
-
-        self.densify_and_clone(grads, max_grad, extent)
-        self.densify_and_split(grads, max_grad, extent)
+        color_grads[color_grads.isnan()] = 0.0
+        self.densify_and_clone(grads,color_grads, max_grad, extent)
+        self.densify_and_split(grads,color_grads, max_grad, extent)
 
         prune_mask = (self.get_opacity < min_opacity).squeeze()
         if max_screen_size:
@@ -485,7 +525,9 @@ class GaussianModel:
             #     print("big_points_vs: %d, big_points_ws: %d small_opacity: %d" % (big_points_vs.sum().item(), big_points_ws.sum().item(), (self.get_opacity < min_opacity).sum().item()))
             #     breakpoint()
         self.prune_points(prune_mask)
-        # self.prune_kappas(0.1) 
+        if not self.enable_opacity:
+            self.prune_kappas(0.5) 
+        
         torch.cuda.empty_cache()
 
     def prune_kappas(self,min_kappa):
@@ -500,6 +542,10 @@ class GaussianModel:
         # print(update_filter.sum())
         self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter], dim=-1, keepdim=True)
         self.denom[update_filter] += 1
+        # breakpoint()
+        self.color_gradient_accum[update_filter] += torch.norm(self._features_dc.grad[update_filter], dim=-2).mean(-1,keepdim=True)
+        self.color_gradient_accum[update_filter] += torch.norm(self._features_rest.grad[update_filter], dim=-2).mean(-1,keepdim=True)
+        self.color_denom[update_filter] += 1
     def get_points_from_depth(self, fov_camera, depth, scale=1):
         st = int(max(int(scale/2)-1,0))
         depth_view = depth.squeeze()[st::scale,st::scale]

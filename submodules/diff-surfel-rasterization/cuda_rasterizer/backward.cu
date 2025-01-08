@@ -169,18 +169,23 @@ __device__ float computeOpacityGUDF(const glm::vec3 &p_world, const float *norma
 		dEdcos = (T_1 / cos_theta - dTdcos) / kappacos;
 	}
 	else{
-		float G = kappacos * (tf - tn),C = expf(lnC),B = expf(lnB),F = C / kappacos;
+		float G = kappacos * (tf - tn),C = expf(lnC),F = expf(lnC - lnkc);
 		dEdtn = (G + lnT) * expf(lnF) - 1;
-		float dCdkappa = -ftn * expf(lnF),dBdkappa = -ftf * expf(lnE);
-		float dHdkappa = dCdkappa / C - dBdkappa / B;
-		float dFdkappa = dCdkappa / kappacos - expf(lnC - lnkc - lnkappa);
+	
+		// float ftn = cos_theta * (depth_o - tn);
+		// float dCdkappa = -ftn * expf(lnF),dBdkappa = -ftf * expf(lnE);
+		float dHdkappa = -ftn * expf(lnF - lnC) + flagtf * expf(lnE + lncos + lntfd - lnB);
+		float dFdkappa = - flagtn * expf(lnF + lntnd - lnkappa) - expf(lnC - lnkc - lnkappa);
 		dEdkappa = (G + lnT) * dFdkappa + F * (dHdkappa + cos_theta * (tf - tn));
-		float dHddepth = -expf(lnkc + lnF) / C + expf(lnkc + lnE) / B;
+		float dHddepth = -expf(lnkc + lnF - lnC) + expf(lnkc + lnE - lnB);
 		dEddepth = -(G + lnT) * expf(lnF) + F * dHddepth;
-		float dCdcos = -flagtn * expf(lntnd + lnkappa + lnF);
-		float dHdcos = dCdcos / C + flagtf * expf(lntfd + lnkappa + lnE) / B;
-		float dFdcos = dCdcos / kappacos - expf(lnC - lnkc - lncos);
+		float dHdcos = -flagtn * expf(lntnd + lnkappa + lnF - lnC) + flagtf * expf(lntfd + lnkappa + lnE - lnB);
+		float dFdcos = -flagtn * expf(lntnd - lncos + lnF) - expf(lnC - lnkc - lncos);
 		dEdcos = (G + lnT) * dFdcos + F * (dHdcos + kappa * (tf - tn));
+		// if (isinf(dEdcos) || isnan(dEdcos)){
+		// 	printf("G: %f, lnT");
+		// }
+		
 	}
 	float dDdtf = -dTdtf * tf, dDdtn = -tf * dTdtn + dEdtn + 1;
 	dD_dkappa[0] = dEdkappa - tf * dT_dkappa[0];
@@ -194,6 +199,8 @@ __device__ float computeOpacityGUDF(const glm::vec3 &p_world, const float *norma
 
 	glm::vec3 dDdno = dDddepth * ddepthdn + dDdcos * dcosdn;
 	dD_dnormal3D[0] = dDdno[0] * view2gaussian[0] + dDdno[1] * view2gaussian[1] + dDdno[2] * view2gaussian[2];
+
+
 	dD_dnormal3D[1] = dDdno[0] * view2gaussian[4] + dDdno[1] * view2gaussian[5] + dDdno[2] * view2gaussian[6];
 	dD_dnormal3D[2] = dDdno[0] * view2gaussian[8] + dDdno[1] * view2gaussian[9] + dDdno[2] * view2gaussian[10];
 
@@ -1317,14 +1324,18 @@ __device__ void compute_transmat_aabb(
 		dL_dRS[1] * glm::vec3(scale.y),
 		dL_dRS[2]);
 	// if(idx == 11834) printf("scale: %f %f \n", scale.x,scale.y);
+	glm::vec4 dldr = quat_to_rotmat_vjp(rot, dL_dR);
 
-	dL_drots[idx] = quat_to_rotmat_vjp(rot, dL_dR);
+	dL_drots[idx] += dldr;
+	// dL_drots[idx].y += dldr.y;
+	// dL_drots[idx].z += dldr.z;
+	// dL_drots[idx].w += dldr.w;
 	dL_dscales[idx] += glm::vec3(
 		(float)glm::dot(dL_dRS[0], R[0]),
 		(float)glm::dot(dL_dRS[1], R[1]),
 		0
 	);
-	dL_dmeans[idx] = glm::vec3(dL_dM[2]);
+	dL_dmeans[idx] += glm::vec3(dL_dM[2]);
 }
 
 

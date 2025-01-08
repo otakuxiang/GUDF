@@ -120,8 +120,8 @@ def get_img_grad_weight(img, beta=2.0):
     grad_img_y = torch.mean(torch.abs(top_point - bottom_point), 0, keepdim=True)
     grad_img = torch.cat((grad_img_x, grad_img_y), dim=0)
     grad_img, _ = torch.max(grad_img, dim=0)
-    grad_img = (grad_img - grad_img.min()) / (grad_img.max() - grad_img.min())
-    grad_img = torch.nn.functional.pad(grad_img[None,None], (1,1,1,1), mode='constant', value=0.0).squeeze()
+    # grad_img = (grad_img - grad_img.min()) / (grad_img.max() - grad_img.min())
+    # grad_img = torch.nn.functional.pad(grad_img[None,None], (1,1,1,1), mode='constant', value=0.0).squeeze()
     return grad_img
 
 
@@ -134,11 +134,25 @@ def get_normal_diff(normal):
     left_point   = normal[..., 1:hd-1, 0:wd-2]
     grad_img_x = 1 - (right_point * left_point).sum(dim=0,keepdim=True)
     grad_img_y = 1 - (top_point * bottom_point).sum(dim=0,keepdim=True)
+    # grad_img_x = torch.where(grad_img_x > 0, 1 - grad_img_x, grad_img_x)
+    # grad_img_y = torch.where(grad_img_y > 0, 1 - grad_img_y, grad_img_y)
     grad_img = torch.cat((grad_img_x, grad_img_y), dim=0)
     grad_img = torch.mean(grad_img, dim=0)
     # grad_img = (grad_img - grad_img.min()) / (grad_img.max() - grad_img.min())
-    grad_img = torch.nn.functional.pad(grad_img[None,None], (1,1,1,1), mode='constant', value=0.0).squeeze()
+    # grad_img = torch.nn.functional.pad(grad_img[None,None], (1,1,1,1), mode='constant', value=0.0).squeeze()
+    # center_point = normal[..., 1:hd-1, 1:wd-1]
+    # diff_img_x = 1 - (center_point * left_point).sum(dim=0,keepdim=True)
+    # diff_img_y = 1 - (center_point * bottom_point).sum(dim=0,keepdim=True)
+    # diff_img = (diff_img_x + diff_img_y) / 2
     
-    return grad_img
+    return grad_img 
+
+def depth_smoothness(depth):
+    _, hd, wd = depth.shape 
+    bottom_point = depth[..., 2:hd,   1:wd-1]
+    right_point  = depth[..., 1:hd-1, 2:wd]
+    center_point = depth[..., 1:hd-1, 1:wd-1]
+    diff_img = (center_point - right_point) ** 2 + (center_point - bottom_point) ** 2
+    return diff_img
     
     

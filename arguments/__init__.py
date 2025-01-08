@@ -98,13 +98,13 @@ class OptimizationParams(ParamGroup):
         self.opacity_reset_interval = 3000
         self.densify_from_iter = 500
         self.densify_until_iter = 15_000
-        self.densify_grad_threshold = 0.0002
+        self.densify_grad_threshold = 0.0003
         self.max_all_points = 600_000
         
         self.use_virtul_cam = False
         self.virtul_cam_prob = 0.5
         self.use_multi_view_trim = True
-        self.multi_view_ncc_weight = 0.15
+        self.multi_view_ncc_weight = 0.5
         self.multi_view_geo_weight = 0.03
         self.multi_view_weight_from_iter = 9_000
         self.multi_view_patch_size = 3

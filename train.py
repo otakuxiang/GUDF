@@ -13,7 +13,7 @@ import os
 import torch
 from random import randint
 import random
-from utils.loss_utils import l1_loss, ssim, lncc,get_img_grad_weight,get_normal_diff
+from utils.loss_utils import l1_loss, ssim, lncc,get_img_grad_weight,get_normal_diff,depth_smoothness
 from utils.graphics_utils import patch_offsets, patch_warp
 
 import torch.nn.functional as F
@@ -113,6 +113,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
     fig1, (ax1,ax2) = plt.subplots(1,2)
+
     for iteration in range(first_iter, opt.iterations + 1):        
         # if iteration == 15001:
         #     # use udfw disable opacities
@@ -152,14 +153,15 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         lambda_normal = opt.lambda_normal if iteration > 7000 else 0.0
         # lambda_dist = opt.lambda_dist if iteration > 3000 and iteration < 15000 else 0.0
         # lambda_dist = opt.lambda_dist if iteration > 3000 else 0.0
-        lambda_kappa = 0.0001 if iteration > 9000 else 0.0
-        lambda_scale = 0.5 if iteration > 9000 else 0.0
+        lambda_kappa = 0.0001 if iteration > 30000 else 0.0
+        lambda_scale = 0.5 if iteration > 40000 else 0.0
         lambda_edge = weight_schedule(iteration, 9000, 15000, 0.0, 1.0) * 0.02
+        lambda_smooth = weight_schedule(iteration, 9000, 15000, 0.0, 1.0) * 0.05
         # rend_dist = render_pkg["rend_dist"] 
         rend_normal  = render_pkg['rend_normal']
         surf_normal = render_pkg['surf_normal']
-        normal_error = (1 - (rend_normal * surf_normal).sum(dim=0))[None]
-        normal_loss = lambda_normal * (normal_error).mean()
+        normal_error = (1 - (rend_normal * surf_normal).sum(dim=0))[None] 
+        normal_loss = lambda_normal * (normal_error).mean() if lambda_normal > 0.0 else 0.0
         # image_weight = (1.0 - get_img_grad_weight(gt_image))
         # image_weight = (image_weight).clamp(0,1).detach() ** 5
         # image_weight = erode(image_weight[None,None]).squeeze()
@@ -169,12 +171,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # if lambda_dist > 0.0:
         #     print(f"dist_loss: {dist_loss.item()}")
         grad_image = get_img_grad_weight(gt_image)
+        # grad_image = erode(grad_image > 0.1)
         edge_mask = grad_image.reshape(-1) > 0.2
         grad_normal = get_normal_diff(rend_normal).reshape(-1)
-        mask = ~grad_normal.isnan()
-        edge_mask = edge_mask[mask]
-        grad_normal = grad_normal[mask]
-        # if lambda_edge > 0.0:
+        # breakpoint()
+        
+        # if iteration > 0:
         #     ax1.set_aspect('equal')
         #     ax1.set_axis_off()
         #     ax1.set_title('edge mask')
@@ -183,18 +185,24 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         #     ax2.set_title('normal diff')
         #     fig1.tight_layout()
         #     gi = grad_image.cpu().numpy()
-        #     gi[(~edge_mask).cpu().numpy()] = 0
-        #     # ax1.imshow(gi)
-        #     ax1.imshow((rend_normal.detach().permute(1,2,0).cpu().numpy() * 0.5 + 0.5))
+        #     gi[(grad_image <= 0.2).cpu().numpy()] = 0
+        #     ax1.imshow(gi)
+        #     # ax1.imshow((rend_normal.detach().permute(1,2,0).cpu().numpy() * 0.5 + 0.5))
             
         #     ax2.imshow(grad_normal.detach().cpu().numpy() / 2)
         #     plt.savefig('test1.png', transparent=True, dpi=300)
         #     breakpoint()
-        # edge_loss = grad_normal[~edge_mask].mean() + 2 - grad_normal[edge_mask].mean()
-        edge_loss = (2 - grad_normal[edge_mask]).mean() + grad_normal[~edge_mask].mean()
-        edge_loss = lambda_edge * edge_loss
+        
+        mask = ~grad_normal.isnan()
+        edge_mask = edge_mask[mask]
+        grad_normal = grad_normal[mask]
+        edge_loss = (2 - grad_normal[edge_mask]).mean() if lambda_edge > 0.0 else 0.0
         kappa_loss = lambda_kappa * (200 - gaussians.get_kappas[visibility_filter]).mean()
-        scale_loss = lambda_scale * (gaussians.get_scaling[visibility_filter][:,2] ** 2).mean()
+        scale_mask = gaussians.get_scaling[visibility_filter][:,2] > 0.2
+        scale_loss = lambda_scale * (gaussians.get_scaling[visibility_filter][scale_mask,2] ** 2).mean()
+        # smooth_loss = lambda_smooth * grad_normal[~edge_mask].mean() if lambda_smooth > 0.0 else 0.0
+        smooth_loss = lambda_smooth * grad_normal.mean() if lambda_smooth > 0.0 else 0.0
+        
         # opacity_reg = lambda_opacity * ((gaussians.get_kappas.log() / 6. -  gaussians.get_opacity) ** 2).mean()
         # if iteration % 10 == 0:
         #     print(dist_loss.item())
@@ -215,8 +223,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 sample_num = opt.multi_view_sample_num
                 pixel_noise_th = opt.multi_view_pixel_noise_th
                 total_patch_size = (patch_size * 2 + 1) ** 2
-                ncc_weight = weight_schedule(iteration, 9000, 15000, 0., opt.multi_view_ncc_weight) 
-                geo_weight = opt.multi_view_geo_weight
+                ncc_weight = weight_schedule(iteration, opt.multi_view_weight_from_iter, 20000, 0., opt.multi_view_ncc_weight) 
+                geo_weight = weight_schedule(iteration, opt.multi_view_weight_from_iter, 20000, 0., opt.multi_view_geo_weight)
                 ## compute geometry consistency mask and loss
                 H, W = render_pkg['surf_depth'].squeeze().shape
                 ix, iy = torch.meshgrid(torch.arange(W, device='cuda').float(), torch.arange(H, device='cuda').float(), indexing='xy')
@@ -268,9 +276,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 #     cv2.imwrite(os.path.join(debug_path, "%05d"%iteration + "_" + viewpoint_cam.image_name + ".jpg"), image_to_show)
 
                 if d_mask.sum() > 0:
-                    geo_loss = geo_weight * ((weights * pixel_noise)[d_mask]).mean()
+                    geo_loss =  ((weights * pixel_noise)[d_mask]).mean()
                 
-                    loss += geo_loss
+                    loss += geo_weight * geo_loss
                     if use_virtul_cam is False:
                         with torch.no_grad():
                             ## sample mask
@@ -339,22 +347,25 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                         ncc = ncc[mask].squeeze()
 
                         if mask.sum() > 0:
-                            ncc_loss = ncc_weight * ncc.mean()
-                            loss += ncc_loss
+                            ncc_loss =  ncc.mean()
+                            loss += ncc_weight * ncc_loss
                             # if iteration > 9000:
                             #     ncc_grad = torch.autograd.grad(ncc.mean(), render_pkg['surf_depth'],retain_graph=True)[0]
                             #     # torch.autograd.grad(ncc.mean(), ref_local_n,retain_graph=True)[0]
                             #     if ncc_grad.isnan().any():
                             #         breakpoint()
                                 
-        total_loss = loss  + normal_loss + kappa_loss + edge_loss + scale_loss
-        if iteration > 10000:            
-            scale_grad = torch.autograd.grad(total_loss, render_pkg['rend_normal'],retain_graph=True)[0]
-            # torch.autograd.grad(ncc_loss, render_pkg['rend_normal'],retain_graph=True)[0]
-            # torch.autograd.grad(ncc_loss,ref_local_d,retain_graph=True)[0]
-            
-            if scale_grad.isnan().any():
-                breakpoint()
+        total_loss = loss  + normal_loss + kappa_loss + lambda_edge * edge_loss + scale_loss + smooth_loss
+        # if iteration > 10000:            
+        # scale_grad = torch.autograd.grad(total_loss, render_pkg['surf_depth'],retain_graph=True)[0]
+        #     # torch.autograd.grad(ncc_loss, render_pkg['rend_normal'],retain_graph=True)[0]
+        #     # torch.autograd.grad(ncc_loss,ref_local_d,retain_graph=True)[0]
+        # print()
+        # torch.autograd.grad(loss, render_pkg['surf_normal'],retain_graph=True)[0].isnan().any()
+        # breakpoint()
+        
+        # if scale_grad.isnan().any():
+        #     breakpoint()
 
         total_loss.backward()
         # exit()
@@ -367,7 +378,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             # Progress bar
             ema_loss_for_log = loss.item() 
             # ema_dist_for_log =  dist_loss.item() 
-            ema_normal_for_log = normal_loss.item()
+            ema_normal_for_log = normal_loss.item() if lambda_normal > 0. else 0.
             if iteration > opt.multi_view_weight_from_iter:
                 ema_multi_view_geo_for_log = 0.4 * geo_loss.item() if geo_loss is not None else 0.0 + 0.6 * ema_multi_view_geo_for_log
                 ema_multi_view_pho_for_log = 0.4 * ncc_loss.item() if ncc_loss is not None else 0.0 + 0.6 * ema_multi_view_pho_for_log
@@ -392,8 +403,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
             # Log and save
             if tb_writer is not None:
-                tb_writer.add_scalar('train_loss_patches/dist_loss', ema_dist_for_log, iteration)
+                # tb_writer.add_scalar('train_loss_patches/dist_loss', ema_dist_for_log, iteration)
                 tb_writer.add_scalar('train_loss_patches/normal_loss', ema_normal_for_log, iteration)
+                tb_writer.add_scalar('train_loss_patches/edge_loss',edge_loss.item() if lambda_edge > 0. else 0., iteration)
                 if iteration > opt.multi_view_weight_from_iter:
                     tb_writer.add_scalar('train_loss_patches/ema_multi_view_geo', ema_multi_view_geo_for_log, iteration)
                     tb_writer.add_scalar('train_loss_patches/ema_multi_view_pho', ema_multi_view_pho_for_log, iteration)
