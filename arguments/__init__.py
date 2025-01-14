@@ -54,7 +54,8 @@ class ModelParams(ParamGroup):
         self._white_background = False
         self.data_device = "cuda"
         self.eval = False
-        self.ncc_scale = 1.0
+        self.preload_img = False
+        self.ncc_scale = 0.5
         self.multi_view_num = 8
         self.multi_view_max_angle = 30
         self.multi_view_min_dis = 0.01
@@ -72,6 +73,8 @@ class PipelineParams(ParamGroup):
         self.compute_cov3D_python = False
         self.depth_ratio = 0.0
         self.debug = False
+        self.udfw = 1.
+        
         super().__init__(parser, "Pipeline Parameters")
 
 class OptimizationParams(ParamGroup):
@@ -90,27 +93,30 @@ class OptimizationParams(ParamGroup):
         self.rotation_lr_max_steps = 10_000
         self.percent_dense = 0.01
         self.lambda_dssim = 0.2
-        self.lambda_dist = 0.0
+        self.lambda_dist = 0.
         self.lambda_normal = 0.015
-        self.opacity_cull = 0.01
+        self.lambda_edge = 0.05
+        self.lambda_smooth = 0.5
+        self.opacity_cull = 0.05
 
         self.densification_interval = 100
         self.opacity_reset_interval = 3000
         self.densify_from_iter = 500
         self.densify_until_iter = 15_000
-        self.densify_grad_threshold = 0.0003
-        self.max_all_points = 600_000
+        self.densify_grad_threshold = 0.0002
+        self.max_all_points = 2000_000
         
         self.use_virtul_cam = False
         self.virtul_cam_prob = 0.5
         self.use_multi_view_trim = True
-        self.multi_view_ncc_weight = 0.5
+        self.multi_view_ncc_weight = 0.15
         self.multi_view_geo_weight = 0.03
         self.multi_view_weight_from_iter = 9_000
         self.multi_view_patch_size = 3
         self.multi_view_sample_num = 102400
         self.multi_view_pixel_noise_th = 1.0
-        self.exposure_compensation = False
+        self.exposure_compensation = True
+        self.use_color_grad = False
         
         super().__init__(parser, "Optimization Parameters")
 

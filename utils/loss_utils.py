@@ -147,6 +147,22 @@ def get_normal_diff(normal):
     
     return grad_img 
 
+def local_plane_loss(depth, normal, camera):
+    _, hd, wd = depth.shape 
+    # breakpoint()
+    points = depth * camera.get_rays().permute(2,0,1)
+    bottom_point = points[..., 2:hd,   1:wd-1]
+    top_point    = points[..., 0:hd-2, 1:wd-1]
+    right_point  = points[..., 1:hd-1, 2:wd]
+    left_point   = points[..., 1:hd-1, 0:wd-2]
+    center_point = points[..., 1:hd-1, 1:wd-1]
+    plane_normal = normal[..., 1:hd-1, 1:wd-1]
+    plane_dist = (plane_normal * (center_point - bottom_point)).sum(dim=0) + \
+                (plane_normal * (center_point - top_point)).sum(dim=0) + \
+                (plane_normal * (center_point - right_point)).sum(dim=0) + \
+                (plane_normal * (center_point - left_point)).sum(dim=0)
+    return plane_dist
+
 def depth_smoothness(depth):
     _, hd, wd = depth.shape 
     bottom_point = depth[..., 2:hd,   1:wd-1]

@@ -93,7 +93,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         pass
 
     # breakpoint()
-    rendered_image, radii, allmap = rasterizer(
+    rendered_image, radii, allmap, out_observe = rasterizer(
         means3D = means3D,
         means2D = means2D,
         shs = shs,
@@ -110,6 +110,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             "viewspace_points": means2D,
             "visibility_filter" : radii > 0,
             "radii": radii,
+            "out_observe": out_observe
     }
     if lamda == 1:
         rets['viewspace_points'] = means3D

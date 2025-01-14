@@ -13,7 +13,7 @@ import os
 import torch
 from random import randint
 import random
-from utils.loss_utils import l1_loss, ssim, lncc,get_img_grad_weight,get_normal_diff,depth_smoothness
+from utils.loss_utils import l1_loss, ssim, lncc,get_img_grad_weight,get_normal_diff,local_plane_loss
 from utils.graphics_utils import patch_offsets, patch_warp
 
 import torch.nn.functional as F
@@ -35,7 +35,7 @@ try:
 except ImportError:
     TENSORBOARD_FOUND = False
 import numpy as np
-    
+torch.autograd.set_detect_anomaly(True)
 
 def gen_virtul_cam(cam, trans_noise=1.0, deg_noise=15.0):
     Rt = np.zeros((4, 4))
@@ -79,9 +79,13 @@ def weight_schedule(iteration, start_iter, end_iter, start_weight, end_weight):
     else:
         return start_weight + (end_weight - start_weight) * (iteration - start_iter) / (end_iter - start_iter)
 
+import shutil
+
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint):
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
+    shutil.copy('./arguments/__init__.py', os.path.join(args.model_path, 'arguments.py'))
+    
     gaussians = GaussianModel(dataset.sh_degree)
     scene = Scene(dataset, gaussians)
     gaussians.training_setup(opt)
@@ -132,7 +136,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
         # breakpoint()
         # udfw = weight_schedule(iteration, 15001, 15002, 0., 1.0)
-        udfw = 1.0
+        udfw = pipe.udfw
         # udfw = 0.0
         
         # print(udfw)
@@ -152,12 +156,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # regularization
         lambda_normal = opt.lambda_normal if iteration > 7000 else 0.0
         # lambda_dist = opt.lambda_dist if iteration > 3000 and iteration < 15000 else 0.0
-        # lambda_dist = opt.lambda_dist if iteration > 3000 else 0.0
-        lambda_kappa = 0.0001 if iteration > 30000 else 0.0
-        lambda_scale = 0.5 if iteration > 40000 else 0.0
-        lambda_edge = weight_schedule(iteration, 9000, 15000, 0.0, 1.0) * 0.02
-        lambda_smooth = weight_schedule(iteration, 9000, 15000, 0.0, 1.0) * 0.05
-        # rend_dist = render_pkg["rend_dist"] 
+        lambda_dist = opt.lambda_dist if iteration > 3000 else 0.0
+        lambda_edge = weight_schedule(iteration, 9000, 15000, 0.0, 1.0) * opt.lambda_edge
+        lambda_smooth = weight_schedule(iteration, 9000, 15000, 0.0, 1.0) * opt.lambda_smooth
+        rend_dist = render_pkg["rend_dist"] 
         rend_normal  = render_pkg['rend_normal']
         surf_normal = render_pkg['surf_normal']
         normal_error = (1 - (rend_normal * surf_normal).sum(dim=0))[None] 
@@ -166,7 +168,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # image_weight = (image_weight).clamp(0,1).detach() ** 5
         # image_weight = erode(image_weight[None,None]).squeeze()
         # normal_loss = lambda_normal * (image_weight * (((surf_normal - rend_normal)).abs().sum(0))).mean()
-        # dist_loss = lambda_dist * (rend_dist).mean()
+        dist_loss = lambda_dist * (rend_dist).mean()
         
         # if lambda_dist > 0.0:
         #     print(f"dist_loss: {dist_loss.item()}")
@@ -174,6 +176,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # grad_image = erode(grad_image > 0.1)
         edge_mask = grad_image.reshape(-1) > 0.2
         grad_normal = get_normal_diff(rend_normal).reshape(-1)
+        # sgrad_normal = get_normal_diff(surf_normal).reshape(-1)
+        # depth_diff = depth_smoothness(render_pkg['surf_depth']).reshape(-1)
         # breakpoint()
         
         # if iteration > 0:
@@ -196,12 +200,16 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         mask = ~grad_normal.isnan()
         edge_mask = edge_mask[mask]
         grad_normal = grad_normal[mask]
+        # sgrad_normal = sgrad_normal[mask]
+        # depth_diff = depth_diff[mask]
         edge_loss = (2 - grad_normal[edge_mask]).mean() if lambda_edge > 0.0 else 0.0
-        kappa_loss = lambda_kappa * (200 - gaussians.get_kappas[visibility_filter]).mean()
         scale_mask = gaussians.get_scaling[visibility_filter][:,2] > 0.2
-        scale_loss = lambda_scale * (gaussians.get_scaling[visibility_filter][scale_mask,2] ** 2).mean()
-        # smooth_loss = lambda_smooth * grad_normal[~edge_mask].mean() if lambda_smooth > 0.0 else 0.0
-        smooth_loss = lambda_smooth * grad_normal.mean() if lambda_smooth > 0.0 else 0.0
+        smooth_loss = lambda_smooth * grad_normal[~edge_mask].mean() if lambda_smooth > 0.0 else 0.0
+        # smooth_loss = lambda_smooth * grad_normal.mean() if lambda_smooth > 0.0 else 0.0
+        
+        # breakpoint()
+        # smooth_loss = lambda_smooth * local_plane_loss(render_pkg['surf_depth'],surf_normal,viewpoint_cam).reshape(-1)[mask][~edge_mask].mean() if lambda_smooth > 0.0 else 0.0
+        
         
         # opacity_reg = lambda_opacity * ((gaussians.get_kappas.log() / 6. -  gaussians.get_opacity) ** 2).mean()
         # if iteration % 10 == 0:
@@ -223,30 +231,37 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 sample_num = opt.multi_view_sample_num
                 pixel_noise_th = opt.multi_view_pixel_noise_th
                 total_patch_size = (patch_size * 2 + 1) ** 2
-                ncc_weight = weight_schedule(iteration, opt.multi_view_weight_from_iter, 20000, 0., opt.multi_view_ncc_weight) 
+                # ncc_weight = weight_schedule(iteration, opt.multi_view_weight_from_iter, 20000, 0., opt.multi_view_ncc_weight) 
+                ncc_weight = opt.multi_view_ncc_weight 
+                
                 geo_weight = weight_schedule(iteration, opt.multi_view_weight_from_iter, 20000, 0., opt.multi_view_geo_weight)
                 ## compute geometry consistency mask and loss
                 H, W = render_pkg['surf_depth'].squeeze().shape
                 ix, iy = torch.meshgrid(torch.arange(W, device='cuda').float(), torch.arange(H, device='cuda').float(), indexing='xy')
                 pixels = torch.stack([ix, iy], dim=-1).float()
 
-                nearest_render_pkg = render(nearest_cam, gaussians, pipe, background,lamda=udfw)
+                nearest_render_pkg = render(nearest_cam, gaussians, pipe, background,app_model=app_model,lamda=udfw)
 
                 pts = gaussians.get_points_from_depth(viewpoint_cam, render_pkg['surf_depth'])
                 pts_in_nearest_cam = pts @ nearest_cam.world_view_transform[:3,:3] + nearest_cam.world_view_transform[3,:3]
                 map_z, d_mask = gaussians.get_points_depth_in_depth_map(nearest_cam, nearest_render_pkg['surf_depth'], pts_in_nearest_cam)
-                
-                pts_in_nearest_cam = pts_in_nearest_cam / (pts_in_nearest_cam[:,2:3])
+                # breakpoint()
+                pts_in_nearest_cam = torch.where(d_mask.unsqueeze(-1).repeat(1,3), pts_in_nearest_cam, torch.ones_like(pts_in_nearest_cam))
+                # map_z = map_z[:,d_mask]
+                pts_in_nearest_cam = pts_in_nearest_cam / (pts_in_nearest_cam[:,2:3] + 1e-4)
                 pts_in_nearest_cam = pts_in_nearest_cam * map_z.squeeze()[...,None]
                 R = torch.tensor(nearest_cam.R).float().cuda()
                 T = torch.tensor(nearest_cam.T).float().cuda()
                 pts_ = (pts_in_nearest_cam-T)@R.transpose(-1,-2)
                 pts_in_view_cam = pts_ @ viewpoint_cam.world_view_transform[:3,:3] + viewpoint_cam.world_view_transform[3,:3]
-                pts_projections = torch.stack(
-                            [pts_in_view_cam[:,0] * viewpoint_cam.Fx / pts_in_view_cam[:,2] + viewpoint_cam.Cx,
-                            pts_in_view_cam[:,1] * viewpoint_cam.Fy / pts_in_view_cam[:,2] + viewpoint_cam.Cy], -1).float()
-                pixel_noise = torch.norm(pts_projections - pixels.reshape(*pts_projections.shape), dim=-1)
-                d_mask = d_mask & (pixel_noise < pixel_noise_th) & (~pixel_noise.isinf()) & (~pixel_noise.isnan())
+                z_mask = (pts_in_view_cam[:,2] > 1e-1) 
+                # pts_in_view_cam = pts_in_view_cam[z_mask]
+                pts_in_view_cam = torch.where(z_mask.unsqueeze(-1).repeat(1,3), pts_in_view_cam, torch.ones_like(pts_in_view_cam))
+                pts_projections = torch.stack([pts_in_view_cam[:,0] * viewpoint_cam.Fx / pts_in_view_cam[:,2] + viewpoint_cam.Cx,pts_in_view_cam[:,1] * viewpoint_cam.Fy / pts_in_view_cam[:,2] + viewpoint_cam.Cy], -1).float()
+                # breakpoint()
+                # pixels = pixels.reshape(-1,2)
+                pixel_noise = torch.norm(pts_projections - pixels.reshape(-1,2), dim=-1)
+                d_mask = z_mask & (pixel_noise < pixel_noise_th) & (~pixel_noise.isinf()) & (~pixel_noise.isnan())
                 
                 # breakpoint()
                 weights = (1.0 / torch.exp(pixel_noise)).detach()
@@ -305,7 +320,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                             ref_to_neareast_t = -ref_to_neareast_r @ viewpoint_cam.world_view_transform[3,:3] + nearest_cam.world_view_transform[3,:3]
 
                         ## compute Homography
-                        ref_local_n = render_pkg["rend_normal"].permute(1,2,0)
+                        ref_local_n = render_pkg["rend_normal"].permute(1,2,0) @ (torch.linalg.inv(viewpoint_cam.world_view_transform[:3,:3].T))
                         ref_local_n = ref_local_n.reshape(-1,3)[valid_indices]
 
                         # ref_local_d = render_pkg['rendered_distance'].squeeze()
@@ -355,14 +370,15 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                             #     if ncc_grad.isnan().any():
                             #         breakpoint()
                                 
-        total_loss = loss  + normal_loss + kappa_loss + lambda_edge * edge_loss + scale_loss + smooth_loss
-        # if iteration > 10000:            
-        # scale_grad = torch.autograd.grad(total_loss, render_pkg['surf_depth'],retain_graph=True)[0]
-        #     # torch.autograd.grad(ncc_loss, render_pkg['rend_normal'],retain_graph=True)[0]
+        total_loss = loss  + normal_loss + lambda_edge * edge_loss + smooth_loss + dist_loss
+        # if iteration > 7000:            
+        #     depth_grad = torch.autograd.grad(total_loss, render_pkg['surf_depth'],retain_graph=True)[0]
+        #     torch.autograd.grad(geo_loss,pts_in_nearest_cam_0,retain_graph=True)[0].isnan().nonzero()
         #     # torch.autograd.grad(ncc_loss,ref_local_d,retain_graph=True)[0]
-        # print()
-        # torch.autograd.grad(loss, render_pkg['surf_normal'],retain_graph=True)[0].isnan().any()
-        # breakpoint()
+        #     # print()
+        #     # torch.autograd.grad(loss, render_pkg['surf_normal'],retain_graph=True)[0].isnan().any()
+        #     if depth_grad.isnan().any():
+        #         breakpoint()
         
         # if scale_grad.isnan().any():
         #     breakpoint()
@@ -433,7 +449,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 #     import traceback
                 #     print(traceback.format_exc())
                 #     breakpoint()
-
+                # mask = (render_pkg["out_observe"] > 0) & visibility_filter
+                # gaussians.max_radii2D[mask] = torch.max(gaussians.max_radii2D[mask], radii[mask])
                 gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
 
                 gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
@@ -448,6 +465,16 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
                     gaussians.reset_opacity()
 
+            # if opt.use_multi_view_trim and iteration % 1000 == 0 and iteration < opt.densify_until_iter and udfw > 0.:
+            #     observe_the = 2
+            #     observe_cnt = torch.zeros_like(gaussians.get_opacity)
+            #     for view in scene.getTrainCameras():
+            #         render_pkg_tmp = render(view, gaussians, pipe, background, app_model=app_model)
+            #         out_observe = render_pkg_tmp["out_observe"]
+            #         observe_cnt[out_observe > 0] += 1
+            #     prune_mask = (observe_cnt < observe_the).squeeze()
+            #     if prune_mask.sum() > 0:
+            #         gaussians.prune_points(prune_mask)
             # Optimizer step
             if iteration < opt.iterations:
                 # gaussians.clip_grad_norm(1)

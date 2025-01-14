@@ -172,7 +172,7 @@ class GaussianModel:
 
         opacities = self.inverse_opacity_activation(0.1 * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda"))
         # kappas = self.inverse_opacity_activation(torch.ones_like(opacities) / 3)
-        kappas = torch.ones_like(opacities) * 100
+        kappas = torch.ones_like(opacities) * 10
         
         self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
         self._features_dc = nn.Parameter(features[:,:,0:1].transpose(1, 2).contiguous().requires_grad_(True))
@@ -194,7 +194,7 @@ class GaussianModel:
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         # breakpoint()
         self.max_all_points = training_args.max_all_points
-
+        self.use_color_grad = training_args.use_color_grad
         l = [
             {'params': [self._xyz], 'lr': training_args.position_lr_init * self.spatial_lr_scale, "name": "xyz"},
             {'params': [self._features_dc], 'lr': training_args.feature_lr, "name": "f_dc"},
@@ -436,19 +436,24 @@ class GaussianModel:
                 ratio = limited_num / float(n_init_points)
                 threshold = torch.quantile(padded_grad, (1.0-ratio))
                 selected_pts_mask = torch.where(padded_grad > threshold, True, False)
+        if self.use_color_grad:
         
-        padded_grad_color = torch.zeros((n_init_points), device="cuda")
-        padded_grad_color[:color_grads.shape[0]] = color_grads.squeeze()
-        color_mask = torch.where(padded_grad_color >= 0.01 * grad_threshold, True, False)
-        color_mask = torch.logical_and(color_mask,
-                                              torch.max(self.get_scaling[...,:2], dim=1).values > self.percent_dense*scene_extent)
-        padded_grad_color[~color_mask] = 0
-        if color_mask.sum().float() > 5:
-            ratio = 0.2 * color_mask.sum().float() / float(n_init_points)    
-            threshold = torch.quantile(padded_grad_color, (1.0-ratio))
-            color_mask = torch.where(padded_grad_color > threshold, True, False)
-            selected_pts_mask = torch.logical_or(selected_pts_mask, color_mask)
-            
+            padded_grad_color = torch.zeros((n_init_points), device="cuda")
+            padded_grad_color[:color_grads.shape[0]] = color_grads.squeeze()
+            color_mask = torch.where(padded_grad_color >= 0.01 * grad_threshold, True, False)
+            color_mask = torch.logical_and(color_mask,
+                                                torch.max(self.get_scaling[...,:2], dim=1).values > self.percent_dense*scene_extent)
+            # padded_grad_color[~color_mask] = 0
+            if color_mask.sum().float() > 5:
+                a = color_mask.squeeze().nonzero()
+                color_mask = torch.zeros_like(selected_pts_mask)
+                a = a[torch.randperm(a.shape[0])[:int(0.2*a.shape[0])]]
+                color_mask[a] = True
+                # ratio = 0.2 * color_mask.sum().float() / float(n_init_points)    
+                # threshold = torch.quantile(padded_grad_color, (1.0-ratio))
+                # color_mask = torch.where(padded_grad_color > threshold, True, False)
+                selected_pts_mask = torch.logical_or(selected_pts_mask, color_mask)
+                
         stds = self.get_scaling[selected_pts_mask][:,:2].repeat(N,1)
         stds = torch.cat([stds, 0 * torch.ones_like(stds[:,:1])], dim=-1)
         means = torch.zeros_like(stds)
@@ -485,16 +490,21 @@ class GaussianModel:
                 ratio = limited_num / float(n_init_points)
                 threshold = torch.quantile(grads_tmp, (1.0-ratio))
                 selected_pts_mask = torch.where(grads_tmp > threshold, True, False)
-        color_mask = torch.where(color_grads.squeeze() >= 0.01 * grad_threshold, True, False)
-        color_mask = torch.logical_and(color_mask,
-                                              torch.max(self.get_scaling[...,:2], dim=1).values <= self.percent_dense*scene_extent)
-        color_grad_tmp = color_grads.squeeze().clone()
-        color_grad_tmp[~color_mask] = 0
-        if color_mask.sum().float() > 5:
-            ratio = 0.2 * color_mask.sum().float() / float(n_init_points)
-            threshold = torch.quantile(color_grad_tmp, (1.0-ratio))
-            color_mask = torch.where(color_grad_tmp > threshold, True, False)
-            selected_pts_mask = torch.logical_or(selected_pts_mask, color_mask)
+        if self.use_color_grad:
+            color_mask = torch.where(color_grads.squeeze() >= 0.01 * grad_threshold, True, False)
+            color_mask = torch.logical_and(color_mask,
+                                                torch.max(self.get_scaling[...,:2], dim=1).values <= self.percent_dense*scene_extent)
+            # color_grad_tmp = color_grads.squeeze().clone()
+            # color_grad_tmp[~color_mask] = 0
+            if color_mask.sum().float() > 5:
+                a = color_mask.squeeze().nonzero()
+                color_mask = torch.zeros_like(selected_pts_mask)
+                a = a[torch.randperm(a.shape[0])[:int(0.2*a.shape[0])]]
+                color_mask[a] = True
+                # ratio = 0.2 * color_mask.sum().float() / float(n_init_points)
+                # threshold = torch.quantile(color_grad_tmp, (1.0-ratio))
+                # color_mask = torch.where(color_grad_tmp > threshold, True, False)
+                selected_pts_mask = torch.logical_or(selected_pts_mask, color_mask)
         new_xyz = self._xyz[selected_pts_mask]
         new_features_dc = self._features_dc[selected_pts_mask]
         new_features_rest = self._features_rest[selected_pts_mask]
@@ -565,6 +575,7 @@ class GaussianModel:
         pts_projections = torch.stack(
                         [points_in_camera_space[:,0] * fov_camera.Fx / points_in_camera_space[:,2] + fov_camera.Cx,
                          points_in_camera_space[:,1] * fov_camera.Fy / points_in_camera_space[:,2] + fov_camera.Cy], -1).float()/scale
+
         mask = (pts_projections[:, 0] > 0) & (pts_projections[:, 0] < W) &\
                (pts_projections[:, 1] > 0) & (pts_projections[:, 1] < H) & (points_in_camera_space[:,2] > 0.1)
 

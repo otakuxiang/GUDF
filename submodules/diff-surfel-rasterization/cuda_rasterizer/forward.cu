@@ -652,6 +652,7 @@ renderCUDA_GUDF(
 	float* __restrict__ final_T,
 	uint32_t* __restrict__ n_contrib,
 	const float* __restrict__ bg_color,
+	int* __restrict__ out_observe,
 	float* __restrict__ out_color,
 	float* __restrict__ out_others)
 {
@@ -838,6 +839,9 @@ renderCUDA_GUDF(
 			// Eq. (3) from 3D Gaussian splatting paper.
 			for (int ch = 0; ch < CHANNELS; ch++)
 				C[ch] += features[collected_id[j] * CHANNELS + ch] * alpha * T;
+			if(T > 0.5){
+				atomicAdd(&(out_observe[collected_id[j]]), 1);
+			}
 			T = test_T;
 
 			// Keep track of last range entry to update this
@@ -891,6 +895,7 @@ void FORWARD::render(
 	float* final_T,
 	uint32_t* n_contrib,
 	const float* bg_color,
+	int* out_observe,
 	float* out_color,
 	float* out_others)
 {	
@@ -928,6 +933,7 @@ void FORWARD::render(
 			final_T,
 			n_contrib,
 			bg_color,
+			out_observe,
 			out_color,
 			out_others);
 	}

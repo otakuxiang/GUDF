@@ -88,30 +88,30 @@ class _RasterizeGaussians(torch.autograd.Function):
         if raster_settings.debug:
             cpu_args = cpu_deep_copy_tuple(args) # Copy them before they can be corrupted
             try:
-                num_rendered, color, depth, radii, geomBuffer, binningBuffer, imgBuffer = _C.rasterize_gaussians(*args)
+                num_rendered, color, depth, radii,out_observe, geomBuffer, binningBuffer, imgBuffer = _C.rasterize_gaussians(*args)
             except Exception as ex:
                 torch.save(cpu_args, "snapshot_fw.dump")
                 print("\nAn error occured in forward. Please forward snapshot_fw.dump for debugging.")
                 raise ex
         else:
             # cpu_args = cpu_deep_copy_tuple(args)
-            num_rendered, color, depth, radii, geomBuffer, binningBuffer, imgBuffer = _C.rasterize_gaussians(*args)
+            num_rendered, color, depth, radii, out_observe, geomBuffer, binningBuffer, imgBuffer = _C.rasterize_gaussians(*args)
 
         # Keep relevant tensors for backward
         ctx.raster_settings = raster_settings
         ctx.num_rendered = num_rendered
         ctx.save_for_backward(colors_precomp, means3D, scales, rotations, kappas, cov3Ds_precomp, radii, sh, geomBuffer, binningBuffer, imgBuffer)
 
-        return color, radii, depth
+        return color, radii, depth, out_observe
 
     @staticmethod
-    def backward(ctx, grad_out_color, grad_radii, grad_depth):
+    def backward(ctx, grad_out_color, grad_radii, grad_depth, grad_out_observe):
 
         # Restore necessary values from context
         num_rendered = ctx.num_rendered
         raster_settings = ctx.raster_settings
         colors_precomp, means3D, scales, rotations, kappas, cov3Ds_precomp, radii, sh, geomBuffer, binningBuffer, imgBuffer = ctx.saved_tensors
-
+        grad_depth = torch.nan_to_num(grad_depth, 0, 0, 0)
         # Restructure args as C++ method expects them
         args = (raster_settings.bg,
                 means3D, 
@@ -155,11 +155,17 @@ class _RasterizeGaussians(torch.autograd.Function):
             # exit()
         else:
             # cpu_args = cpu_deep_copy_tuple(args) # Copy them before they can be corrupted
-            
+            # cpu_args = cpu_deep_copy_tuple(args)
+            # if grad_depth.isnan().any() or grad_depth.isinf().any():
+            #     breakpoint()
+            #     cpu_args = cpu_deep_copy_tuple(args)
             grad_means2D, grad_colors_precomp, grad_opacities, grad_means3D, grad_cov3Ds_precomp, grad_sh, grad_scales, grad_rotations, grad_kappas = _C.rasterize_gaussians_backward(*args)
             # if grad_scales.isnan().any() or grad_scales.isinf().any():
-            #     print("NaN detected in scales backward.")
+            #     # cpu_args = cpu_deep_copy_tuple(args)
+            #     print("NaN detected in scale backward.")
             #     torch.save(cpu_args, "./debug/snapshot_bw.dump")
+            # #     # breakpoint()
+                
             #     exit()
             # torch.save(cpu_args, "./snapshot_bw.dump")
             # exit()
@@ -176,7 +182,7 @@ class _RasterizeGaussians(torch.autograd.Function):
             grad_rotations,
             grad_kappas,
             grad_cov3Ds_precomp,
-            None,
+            None
         )
 
         return grads
