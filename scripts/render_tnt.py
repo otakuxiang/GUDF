@@ -95,7 +95,7 @@ def render_set(model_path, name, iteration, views, scene, gaussians, pipeline, b
 
         if use_depth_filter:
             view_dir = torch.nn.functional.normalize(view.get_rays(), p=2, dim=-1)
-            depth_normal = out["surf_normal"].permute(1,2,0) @ torch.linalg.inv(view.world_view_transform[:3,:3].T)
+            depth_normal = out["surf_normal"].permute(1,2,0)
             depth_normal = torch.nn.functional.normalize(depth_normal, p=2, dim=-1)
             dot = torch.sum(view_dir*depth_normal, dim=-1)
             angle = torch.acos(dot)
@@ -162,7 +162,14 @@ def render_set(model_path, name, iteration, views, scene, gaussians, pipeline, b
                                 (pts[...,2] < bounds[2,0]) | (pts[...,2] > bounds[2,1])
                 unvalid_mask = unvalid_mask.reshape(H,W)
                 ref_depth[unvalid_mask] = 0
-
+            # breakpoint()
+            
+            if view.gt_alpha_mask is not None:
+                # breakpoint()
+                mask = (view.gt_alpha_mask < 1).squeeze(0)
+                ref_depth[mask] = 0
+            else:
+                ref_depth[ref_depth>max_depth] = 0
             ref_depth = ref_depth.detach().cpu().numpy()
             
             pose = np.identity(4)

@@ -194,10 +194,10 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
         bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
         background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
         print(f"TSDF voxel_size {voxel_size}")
-        volume = o3d.pipelines.integration.ScalableTSDFVolume(
+        volume = o3d.integration.ScalableTSDFVolume(
         voxel_length=voxel_size,
         sdf_trunc=4.0*voxel_size,
-        color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8)
+        color_type=o3d.integration.TSDFVolumeColorType.RGB8)
 
         if not skip_train:
             render_set(dataset.model_path, "train", scene.loaded_iter, scene.getTrainCameras(), scene, gaussians, pipeline, background, 

@@ -100,7 +100,7 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
             image = Image.open(f)
 
         cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
-                              image_path=image_path, image_name=image_name, width=width, height=height)
+                              image_path=image_path, image_name=image_name, width=image.size[0], height=image.size[1])
         cam_infos.append(cam_info)
     sys.stdout.write('\n')
     return cam_infos
@@ -143,6 +143,7 @@ def readColmapSceneInfo(path, images, eval, llffhold=8):
         cam_intrinsics = read_intrinsics_text(cameras_intrinsic_file)
 
     reading_dir = "images" if images == None else images
+    # print(os.path.join(path, reading_dir))
     cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=os.path.join(path, reading_dir))
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
 

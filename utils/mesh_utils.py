@@ -75,7 +75,7 @@ class GaussianExtractor(object):
             bg_color = [0, 0, 0]
         background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
         self.gaussians = gaussians
-        self.render = partial(render, pipe=pipe, bg_color=background)
+        self.render = partial(render, pipe=pipe, bg_color=background,lamda = pipe.udfw)
         self.clean()
 
     @torch.no_grad()
@@ -145,10 +145,10 @@ class GaussianExtractor(object):
         print(f'sdf_trunc: {sdf_trunc}')
         print(f'depth_truc: {depth_trunc}')
 
-        volume = o3d.pipelines.integration.ScalableTSDFVolume(
+        volume = o3d.integration.ScalableTSDFVolume(
             voxel_length= voxel_size,
             sdf_trunc=sdf_trunc,
-            color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8
+            color_type=o3d.integration.TSDFVolumeColorType.RGB8
         )
 
         for i, cam_o3d in tqdm(enumerate(to_cam_open3d(self.viewpoint_stack)), desc="TSDF integration progress"):

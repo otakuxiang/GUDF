@@ -51,7 +51,7 @@ class Camera(nn.Module):
         self.FoVy = FoVy
         self.image_name = image_name
         self.image_path = image_path
-
+        # print(self.image_path)
         try:
             self.data_device = torch.device(data_device)
         except Exception as e:
@@ -79,13 +79,21 @@ class Camera(nn.Module):
 
             # for DTU
             mask_path = image_path.replace("images", "mask")[:-10]
-            mask_path = mask_path + image_path[-7:]
+            # breakpoint()
+            mask_path = mask_path + image_path[-7:] # DTU
+            # mask_path = mask_path + image_path[-10:]  # TNT
             if os.path.exists(mask_path):
-                self.mask = torch.tensor(cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)).to(self.data_device).squeeze()/255
-                self.mask = erode(self.mask[None,None].float()).squeeze()
-                self.mask = torch.nn.functional.interpolate(self.mask[None,None], size=(W,H), mode='bilinear', align_corners=False).squeeze()
-                self.gt_alpha_mask = (self.mask < 0.5).to(self.data_device)
-        
+                # breakpoint()
+                mask = Image.open(mask_path)
+                mask = PILtoTorch(mask, resolution=(W,H))
+                # self.mask = torch.tensor(cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)).to(self.data_device).squeeze()/255
+                # self.mask = erode(self.mask[None,None].float()).squeeze()
+                # self.mask_1 = torch.nn.functional.interpolate(self.mask[None,None], size=(H,W), mode='bilinear', align_corners=False).squeeze()
+                self.gt_alpha_mask = (self.mask).to(self.data_device)
+                self.original_image[self.gt_alpha_mask < 0.5] = 0
+                self.image_gray[self.gt_alpha_mask < 0.5] = 0
+            else:
+                self.gt_alpha_mask = None
 
         self.Fx = fov2focal(FoVx, self.image_width)
         self.Fy = fov2focal(FoVy, self.image_height)

@@ -146,7 +146,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # gt_image = viewpoint_cam.original_image.cuda()
         gt_image, gt_image_gray = viewpoint_cam.get_image()
         
-        if args.exposure_compensation:
+        ssim_loss = (1.0 - ssim(image, gt_image))
+        if ssim_loss < 0.5 and args.exposure_compensation:
             app_image = render_pkg['app_image']
             Ll1 = l1_loss(app_image, gt_image)
         else:
@@ -164,6 +165,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         surf_normal = render_pkg['surf_normal']
         normal_error = (1 - (rend_normal * surf_normal).sum(dim=0))[None] 
         normal_loss = lambda_normal * (normal_error).mean() if lambda_normal > 0.0 else 0.0
+        alpha_loss =  render_pkg['render_alpha'][:,viewpoint_cam.gt_alpha_mask < 0.5] if viewpoint_cam.gt_alpha_mask is not None else 0.
+        
         # image_weight = (1.0 - get_img_grad_weight(gt_image))
         # image_weight = (image_weight).clamp(0,1).detach() ** 5
         # image_weight = erode(image_weight[None,None]).squeeze()
@@ -176,7 +179,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # grad_image = erode(grad_image > 0.1)
         edge_mask = grad_image.reshape(-1) > 0.2
         grad_normal = get_normal_diff(rend_normal).reshape(-1)
-        # sgrad_normal = get_normal_diff(surf_normal).reshape(-1)
+        # grad_normal = get_normal_diff(surf_normal).reshape(-1)
         # depth_diff = depth_smoothness(render_pkg['surf_depth']).reshape(-1)
         # breakpoint()
         
@@ -203,12 +206,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # sgrad_normal = sgrad_normal[mask]
         # depth_diff = depth_diff[mask]
         edge_loss = (2 - grad_normal[edge_mask]).mean() if lambda_edge > 0.0 else 0.0
-        scale_mask = gaussians.get_scaling[visibility_filter][:,2] > 0.2
+        # scale_mask = gaussians.get_scaling[visibility_filter][:,2] > 0.2
         smooth_loss = lambda_smooth * grad_normal[~edge_mask].mean() if lambda_smooth > 0.0 else 0.0
         # smooth_loss = lambda_smooth * grad_normal.mean() if lambda_smooth > 0.0 else 0.0
         
         # breakpoint()
-        # smooth_loss = lambda_smooth * local_plane_loss(render_pkg['surf_depth'],surf_normal,viewpoint_cam).reshape(-1)[mask][~edge_mask].mean() if lambda_smooth > 0.0 else 0.0
+        # smooth_loss = lambda_smooth * local_plane_loss(render_pkg['surf_depth'],surf_normal,viewpoint_cam).reshape(-1)[~edge_mask][mask].mean() if lambda_smooth > 0.0 else 0.0
         
         
         # opacity_reg = lambda_opacity * ((gaussians.get_kappas.log() / 6. -  gaussians.get_opacity) ** 2).mean()
@@ -320,7 +323,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                             ref_to_neareast_t = -ref_to_neareast_r @ viewpoint_cam.world_view_transform[3,:3] + nearest_cam.world_view_transform[3,:3]
 
                         ## compute Homography
-                        ref_local_n = render_pkg["rend_normal"].permute(1,2,0) @ (torch.linalg.inv(viewpoint_cam.world_view_transform[:3,:3].T))
+                        ref_local_n = render_pkg["rend_normal"].permute(1,2,0) 
                         ref_local_n = ref_local_n.reshape(-1,3)[valid_indices]
 
                         # ref_local_d = render_pkg['rendered_distance'].squeeze()
@@ -370,7 +373,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                             #     if ncc_grad.isnan().any():
                             #         breakpoint()
                                 
-        total_loss = loss  + normal_loss + lambda_edge * edge_loss + smooth_loss + dist_loss
+        total_loss = loss  + normal_loss + lambda_edge * edge_loss + smooth_loss + dist_loss + alpha_loss
         # if iteration > 7000:            
         #     depth_grad = torch.autograd.grad(total_loss, render_pkg['surf_depth'],retain_graph=True)[0]
         #     torch.autograd.grad(geo_loss,pts_in_nearest_cam_0,retain_graph=True)[0].isnan().nonzero()

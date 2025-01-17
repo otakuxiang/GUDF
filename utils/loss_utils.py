@@ -157,10 +157,10 @@ def local_plane_loss(depth, normal, camera):
     left_point   = points[..., 1:hd-1, 0:wd-2]
     center_point = points[..., 1:hd-1, 1:wd-1]
     plane_normal = normal[..., 1:hd-1, 1:wd-1]
-    plane_dist = (plane_normal * (center_point - bottom_point)).sum(dim=0) + \
-                (plane_normal * (center_point - top_point)).sum(dim=0) + \
-                (plane_normal * (center_point - right_point)).sum(dim=0) + \
-                (plane_normal * (center_point - left_point)).sum(dim=0)
+    plane_dist = (plane_normal * (top_point - center_point)).sum(dim=0) ** 2 + \
+        (plane_normal * (left_point - center_point)).sum(dim=0).abs() ** 2 +\
+        (plane_normal * (right_point - center_point)).sum(dim=0).abs() ** 2 +\
+        (plane_normal * (bottom_point - center_point)).sum(dim=0).abs() ** 2
     return plane_dist
 
 def depth_smoothness(depth):

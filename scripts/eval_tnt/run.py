@@ -151,7 +151,6 @@ def run_evaluation(dataset_dir, traj_path, ply_path, out_dir, view_crop):
     dist_threshold = dTau
     # Refine alignment by using the actual GT and MVS pointclouds
     vol = o3d.visualization.read_selection_polygon_volume(cropfile)
-    trajectory_transform = np.eye(4)
     # # Registration refinment in 3 iterations
     r2 = registration_vol_ds(pcd, gt_pcd, trajectory_transform, vol, dTau,
                              dTau * 80, 20)

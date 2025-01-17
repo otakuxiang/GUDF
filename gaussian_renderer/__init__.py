@@ -122,7 +122,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
 
     # get normal map
     render_normal = allmap[2:5]
-    render_normal = (render_normal.permute(1,2,0) @ (viewpoint_camera.world_view_transform[:3,:3].T)).permute(2,0,1)
+    # render_normal = (render_normal.permute(1,2,0) @ (viewpoint_camera.world_view_transform[:3,:3].T)).permute(2,0,1)
     render_normal = render_normal / (torch.linalg.norm(render_normal, dim=0, keepdim=True) + 1e-6)
     # get median depth map
     render_depth_median = allmap[5:6]
@@ -148,8 +148,8 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     surf_depth = render_depth_expected * (1-pipe.depth_ratio) + (pipe.depth_ratio) * render_depth_median
     
     # assume the depth points form the 'surface' and generate psudo surface normal for regularizations.
-    surf_normal = depth_to_normal(viewpoint_camera, surf_depth)
-    surf_normal = surf_normal.permute(2,0,1)
+    surf_normal = depth_to_normal(viewpoint_camera, surf_depth) @ (viewpoint_camera.world_view_transform[:3,:3])
+    surf_normal = surf_normal.permute(2,0,1) 
     # remember to multiply with accum_alpha since render_normal is unnormalized.
     # surf_normal = surf_normal * (render_alpha).detach()
     if app_model is not None:
