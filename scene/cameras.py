@@ -61,6 +61,7 @@ class Camera(nn.Module):
         self.original_image, self.image_gray, self.mask = None, None, None
         self.preload_img = preload_img
         self.ncc_scale = ncc_scale
+        self.gt_alpha_mask = None
         # self.original_image = image.clamp(0.0, 1.0).to(self.data_device)
         self.image_width = W
         self.image_height = H
@@ -87,11 +88,11 @@ class Camera(nn.Module):
                 mask = Image.open(mask_path)
                 mask = PILtoTorch(mask, resolution=(W,H))
                 # self.mask = torch.tensor(cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)).to(self.data_device).squeeze()/255
-                # self.mask = erode(self.mask[None,None].float()).squeeze()
+                # self.mask = erode(mask[None,None].float()).squeeze()
                 # self.mask_1 = torch.nn.functional.interpolate(self.mask[None,None], size=(H,W), mode='bilinear', align_corners=False).squeeze()
-                self.gt_alpha_mask = (self.mask).to(self.data_device)
-                self.original_image[self.gt_alpha_mask < 0.5] = 0
-                self.image_gray[self.gt_alpha_mask < 0.5] = 0
+                self.gt_alpha_mask = mask.to(self.data_device)
+                self.original_image[:,(self.gt_alpha_mask < 0.5).squeeze(0)] = 0
+                # self.image_gray[:,(self.gt_alpha_mask < 0.5).squeeze(0)] = 0
             else:
                 self.gt_alpha_mask = None
 

@@ -167,12 +167,12 @@ class GaussianModel:
 
         dist2 = torch.clamp_min(distCUDA2(torch.from_numpy(np.asarray(pcd.points)).float().cuda()), 0.0000001)
         scales = torch.log(torch.sqrt(dist2))[...,None].repeat(1, 3)
-        # scales[:,2] = scales[:,2].clamp(max=0.2)
+        scales[:,2] = scales[:,2].clamp(max=0.05)
         rots = torch.rand((fused_point_cloud.shape[0], 4), device="cuda")
 
         opacities = self.inverse_opacity_activation(0.1 * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda"))
         # kappas = self.inverse_opacity_activation(torch.ones_like(opacities) / 3)
-        kappas = torch.ones_like(opacities) * 10
+        kappas = torch.ones_like(opacities) * 50
         
         self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
         self._features_dc = nn.Parameter(features[:,:,0:1].transpose(1, 2).contiguous().requires_grad_(True))

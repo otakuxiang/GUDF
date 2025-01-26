@@ -99,7 +99,7 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
         with open(image_path, 'rb') as f:
             image = Image.open(f)
 
-        cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
+        cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=None,
                               image_path=image_path, image_name=image_name, width=image.size[0], height=image.size[1])
         cam_infos.append(cam_info)
     sys.stdout.write('\n')

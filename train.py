@@ -165,7 +165,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         surf_normal = render_pkg['surf_normal']
         normal_error = (1 - (rend_normal * surf_normal).sum(dim=0))[None] 
         normal_loss = lambda_normal * (normal_error).mean() if lambda_normal > 0.0 else 0.0
-        alpha_loss =  render_pkg['render_alpha'][:,viewpoint_cam.gt_alpha_mask < 0.5] if viewpoint_cam.gt_alpha_mask is not None else 0.
         
         # image_weight = (1.0 - get_img_grad_weight(gt_image))
         # image_weight = (image_weight).clamp(0,1).detach() ** 5
@@ -373,7 +372,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                             #     if ncc_grad.isnan().any():
                             #         breakpoint()
                                 
-        total_loss = loss  + normal_loss + lambda_edge * edge_loss + smooth_loss + dist_loss + alpha_loss
+        total_loss = loss  + normal_loss + lambda_edge * edge_loss + smooth_loss + dist_loss
         # if iteration > 7000:            
         #     depth_grad = torch.autograd.grad(total_loss, render_pkg['surf_depth'],retain_graph=True)[0]
         #     torch.autograd.grad(geo_loss,pts_in_nearest_cam_0,retain_graph=True)[0].isnan().nonzero()
@@ -582,8 +581,8 @@ if __name__ == "__main__":
     parser.add_argument('--ip', type=str, default="127.0.0.1")
     parser.add_argument('--port', type=int, default=6009)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
-    parser.add_argument("--test_iterations", nargs="+", type=int, default=[7_000, 15_000, 20_000, 30_000])
-    parser.add_argument("--save_iterations", nargs="+", type=int, default=[20000, 30_000])
+    parser.add_argument("--test_iterations", nargs="+", type=int, default=[7_000, 15_000, 20_000])
+    parser.add_argument("--save_iterations", nargs="+", type=int, default=[20000])
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[15002])
     parser.add_argument("--start_checkpoint", type=str, default = None)
