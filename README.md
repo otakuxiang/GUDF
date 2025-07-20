@@ -48,17 +48,3 @@ We have provide the script for running DTU dataset, please see [script](scripts/
 
 ## Acknowledgements
 This project is built upon [2DGS](https://github.com/hbb1/2d-gaussian-splatting). The TSDF fusion for extracting mesh is based on [Open3D](https://github.com/isl-org/Open3D). The rendering script for MipNeRF360 is adopted from [Multinerf](https://github.com/google-research/multinerf/), while the evaluation scripts for DTU and Tanks and Temples dataset are taken from [DTUeval-python](https://github.com/jzhangbs/DTUeval-python) and [TanksAndTemples](https://github.com/isl-org/TanksAndTemples/tree/master/python_toolbox/evaluation), respectively. We thank all the authors for their great repos. 
-
-
-## Citation
-If you find our code or paper helps, please consider citing:
-```bibtex
-@inproceedings{Huang2DGS2024,
-    title={2D Gaussian Splatting for Geometrically Accurate Radiance Fields},
-    author={Huang, Binbin and Yu, Zehao and Chen, Anpei and Geiger, Andreas and Gao, Shenghua},
-    publisher = {Association for Computing Machinery},
-    booktitle = {SIGGRAPH 2024 Conference Papers},
-    year      = {2024},
-    doi       = {10.1145/3641519.3657428}
-}
-```
