@@ -9,7 +9,6 @@ debug/
 *.txt
 # submodules
 **__pycache__**
-*.png
 *.out
 eval
 *.npz
